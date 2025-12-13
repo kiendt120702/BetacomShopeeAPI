@@ -48,9 +48,17 @@ interface FlashSale {
   synced_at: string;
 }
 
+interface SyncProgress {
+  current_step: string;
+  total_items: number;
+  processed_items: number;
+  is_syncing: boolean;
+}
+
 interface SyncStatus {
   flash_sales_synced_at: string | null;
   is_syncing: boolean;
+  sync_progress?: SyncProgress;
 }
 
 interface ItemInfo {
@@ -127,6 +135,15 @@ export default function FlashSalePanel() {
   const [copying, setCopying] = useState(false);
   const [copyMode, setCopyMode] = useState<'now' | 'schedule'>('now');
   const [minutesBefore, setMinutesBefore] = useState(10);
+
+  // Sync progress state
+  const [showSyncProgress, setShowSyncProgress] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({
+    status: 'idle' as 'idle' | 'syncing' | 'done' | 'error',
+    message: '',
+    total: 0,
+    synced: 0,
+  });
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp * 1000).toLocaleString('vi-VN', {
@@ -206,6 +223,39 @@ export default function FlashSalePanel() {
     }
 
     setSyncing(true);
+    setShowSyncProgress(true);
+    setSyncProgress({
+      status: 'syncing',
+      message: 'Đang khởi tạo...',
+      total: 0,
+      synced: 0,
+    });
+
+    // Subscribe realtime để nhận progress updates
+    const progressChannel = supabase
+      .channel('sync_progress')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'sync_status',
+          filter: `shop_id=eq.${token.shop_id}`,
+        },
+        (payload: any) => {
+          const progress = payload.new?.sync_progress as SyncProgress | undefined;
+          if (progress) {
+            setSyncProgress({
+              status: progress.is_syncing ? 'syncing' : 'done',
+              message: progress.current_step,
+              total: progress.total_items,
+              synced: progress.processed_items,
+            });
+          }
+        }
+      )
+      .subscribe();
+
     try {
       const { data, error } = await supabase.functions.invoke('shopee-sync-worker', {
         body: {
@@ -215,15 +265,26 @@ export default function FlashSalePanel() {
         },
       });
 
+      // Unsubscribe sau khi xong
+      supabase.removeChannel(progressChannel);
+
       if (error) throw error;
       if (data?.error) {
-        toast({ title: 'Lỗi sync', description: data.error, variant: 'destructive' });
+        setSyncProgress({
+          status: 'error',
+          message: data.error,
+          total: 0,
+          synced: 0,
+        });
         return;
       }
 
-      toast({ 
-        title: 'Sync thành công', 
-        description: `Đã cập nhật ${data?.flash_sale_count || 0} chương trình Flash Sale` 
+      const count = data?.flash_sale_count || 0;
+      setSyncProgress({
+        status: 'done',
+        message: `Hoàn thành! Đã đồng bộ ${count} chương trình Flash Sale`,
+        total: count,
+        synced: count,
       });
       
       // Reload data từ DB
@@ -231,14 +292,20 @@ export default function FlashSalePanel() {
       await loadSyncStatus();
       
     } catch (err) {
-      toast({ title: 'Lỗi', description: (err as Error).message, variant: 'destructive' });
+      supabase.removeChannel(progressChannel);
+      setSyncProgress({
+        status: 'error',
+        message: (err as Error).message,
+        total: 0,
+        synced: 0,
+      });
     } finally {
       setSyncing(false);
     }
   };
 
   // ============================================
-  // REALTIME SUBSCRIPTION
+  // LOAD DATA ON MOUNT (Không dùng realtime để tránh reload liên tục)
   // ============================================
   
   useEffect(() => {
@@ -247,41 +314,6 @@ export default function FlashSalePanel() {
     // Load initial data
     loadFlashSalesFromDB();
     loadSyncStatus();
-
-    // Subscribe to realtime changes
-    const channel = supabase
-      .channel('flash_sale_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'flash_sale_data',
-          filter: `shop_id=eq.${token.shop_id}`,
-        },
-        () => {
-          console.log('[Realtime] Flash sale data changed, reloading...');
-          loadFlashSalesFromDB();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'sync_status',
-          filter: `shop_id=eq.${token.shop_id}`,
-        },
-        () => {
-          console.log('[Realtime] Sync status changed, reloading...');
-          loadSyncStatus();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [token?.shop_id, user?.id]);
 
   // ============================================
@@ -635,6 +667,81 @@ export default function FlashSalePanel() {
           </div>
         )}
       </div>
+
+      {/* Sync Progress Dialog */}
+      <Dialog open={showSyncProgress} onOpenChange={setShowSyncProgress}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {syncProgress.status === 'syncing' && (
+                <svg className="w-5 h-5 animate-spin text-orange-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              )}
+              {syncProgress.status === 'done' && (
+                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+              {syncProgress.status === 'error' && (
+                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              )}
+              {syncProgress.status === 'syncing' ? 'Đang đồng bộ...' : 
+               syncProgress.status === 'done' ? 'Hoàn tất đồng bộ' : 'Lỗi đồng bộ'}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4">
+            {/* Progress bar - Real progress */}
+            <div className="w-full bg-slate-200 rounded-full h-2.5 mb-4">
+              <div 
+                className={`h-2.5 rounded-full transition-all duration-500 ${
+                  syncProgress.status === 'error' ? 'bg-red-500' : 'bg-green-500'
+                }`}
+                style={{ 
+                  width: syncProgress.total > 0 
+                    ? `${Math.round((syncProgress.synced / syncProgress.total) * 100)}%`
+                    : syncProgress.status === 'done' ? '100%' : '30%'
+                }}
+              />
+            </div>
+            
+            {/* Progress text */}
+            {syncProgress.total > 0 && (
+              <p className="text-xs text-slate-400 mb-2">
+                {syncProgress.synced}/{syncProgress.total} chương trình ({Math.round((syncProgress.synced / syncProgress.total) * 100)}%)
+              </p>
+            )}
+            
+            {/* Message */}
+            <p className={`text-sm ${syncProgress.status === 'error' ? 'text-red-600' : 'text-slate-600'}`}>
+              {syncProgress.message}
+            </p>
+            
+            {/* Stats */}
+            {syncProgress.status === 'done' && syncProgress.total > 0 && (
+              <div className="mt-3 p-3 bg-green-50 rounded-lg">
+                <p className="text-sm text-green-700">
+                  ✓ Đã đồng bộ <span className="font-semibold">{syncProgress.synced}</span> chương trình Flash Sale
+                </p>
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowSyncProgress(false)}
+              disabled={syncProgress.status === 'syncing'}
+            >
+              {syncProgress.status === 'syncing' ? 'Đang xử lý...' : 'Đóng'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Detail Modal */}
       <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>

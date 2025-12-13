@@ -280,7 +280,7 @@ const Index = () => {
   
   // Auth states
   const { user, isAuthenticated: isUserAuthenticated, isLoading: isUserLoading, signOut } = useAuth();
-  const { token, isLoading: isShopeeLoading, error: shopeeError, login: connectShopee, logout: disconnectShopee } = useShopeeAuth();
+  const { token, isLoading: isShopeeLoading, error: shopeeError, login: connectShopee, logout: disconnectShopee, shops, selectedShopId, switchShop } = useShopeeAuth();
   const [connectingShopee, setConnectingShopee] = useState(false);
 
   const handleConnectShopee = async () => {
@@ -298,6 +298,7 @@ const Index = () => {
   
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showShopMenu, setShowShopMenu] = useState(false);
 
   const isShopConnected = !!token?.shop_id;
   
@@ -448,11 +449,66 @@ const Index = () => {
           </h2>
           
           <div className="flex items-center gap-3">
-            {/* Shop info */}
+            {/* Shop selector */}
             {isShopConnected && (
-              <div className="flex items-center gap-2 bg-emerald-50 rounded-full px-3 py-1.5">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-                <span className="text-sm text-emerald-700">Shop: <span className="font-medium">{token?.shop_id}</span></span>
+              <div className="relative">
+                <button
+                  onClick={() => setShowShopMenu(!showShopMenu)}
+                  className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 rounded-full px-3 py-1.5 transition-colors"
+                >
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+                  <span className="text-sm text-emerald-700">
+                    Shop: <span className="font-medium">
+                      {shops.find(s => s.shop_id === selectedShopId)?.shop_name || token?.shop_id}
+                    </span>
+                  </span>
+                  {shops.length > 1 && (
+                    <svg className={cn("w-3 h-3 text-emerald-600 transition-transform", showShopMenu && "rotate-180")} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  )}
+                </button>
+                
+                {/* Shop dropdown */}
+                {showShopMenu && shops.length > 1 && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowShopMenu(false)} />
+                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-20">
+                      <div className="px-3 py-2 border-b border-slate-100">
+                        <p className="text-xs font-medium text-slate-500">Chọn shop</p>
+                      </div>
+                      {shops.map((shop) => (
+                        <button
+                          key={shop.shop_id}
+                          onClick={() => { switchShop(shop.shop_id); setShowShopMenu(false); }}
+                          className={cn(
+                            "w-full px-3 py-2.5 text-left hover:bg-slate-50 flex items-center gap-3",
+                            shop.shop_id === selectedShopId && "bg-emerald-50"
+                          )}
+                        >
+                          {shop.shop_logo ? (
+                            <img src={shop.shop_logo} alt="" className="w-8 h-8 rounded-lg object-cover" />
+                          ) : (
+                            <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
+                              <StoreIcon />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-700 truncate">
+                              {shop.shop_name || `Shop #${shop.shop_id}`}
+                            </p>
+                            <p className="text-xs text-slate-400">ID: {shop.shop_id}</p>
+                          </div>
+                          {shop.shop_id === selectedShopId && (
+                            <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
             

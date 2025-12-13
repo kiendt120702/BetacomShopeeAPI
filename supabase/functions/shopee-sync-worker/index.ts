@@ -49,50 +49,62 @@ async function createSignature(
 async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: string) {
   console.log(`[SYNC] Looking for token - shop_id: ${shopId}, user_id: ${userId}`);
   
-  // Try to get token from user_shops table first (with user_id if provided)
-  let query = supabase.from('user_shops').select('*').eq('shop_id', shopId);
-  if (userId) {
-    query = query.eq('user_id', userId);
-  }
-  
-  const { data: shopData, error: shopError } = await query.single();
+  // 1. Tìm token từ bảng shops (nơi frontend lưu token)
+  const { data: shopData, error: shopError } = await supabase
+    .from('shops')
+    .select('shop_id, access_token, refresh_token, expired_at, merchant_id')
+    .eq('shop_id', shopId)
+    .single();
 
-  console.log(`[SYNC] user_shops query result:`, { 
+  console.log(`[SYNC] shops table query result:`, { 
     found: !!shopData, 
     error: shopError?.message,
     hasAccessToken: !!shopData?.access_token 
   });
 
-  if (shopError || !shopData) {
-    // Fallback to shopee_tokens table
-    const { data: tokenData, error: tokenError } = await supabase
-      .from('shopee_tokens')
-      .select('*')
-      .eq('shop_id', shopId)
-      .single();
+  if (!shopError && shopData?.access_token) {
+    return {
+      access_token: shopData.access_token,
+      refresh_token: shopData.refresh_token,
+      shop_id: shopData.shop_id,
+    };
+  }
 
-    console.log(`[SYNC] shopee_tokens query result:`, { 
-      found: !!tokenData, 
-      error: tokenError?.message 
-    });
+  // 2. Fallback: Tìm trong bảng user_shops (cũ)
+  let query = supabase.from('user_shops').select('*').eq('shop_id', shopId);
+  if (userId) {
+    query = query.eq('user_id', userId);
+  }
+  
+  const { data: userShopData, error: userShopError } = await query.single();
 
-    if (tokenError || !tokenData) {
-      // For testing: Use environment variables if available
-      const testAccessToken = Deno.env.get('TEST_SHOPEE_ACCESS_TOKEN');
-      const testRefreshToken = Deno.env.get('TEST_SHOPEE_REFRESH_TOKEN');
-      
-      if (testAccessToken && testRefreshToken) {
-        console.log(`[SYNC] Using test tokens for shop ${shopId}`);
-        return {
-          access_token: testAccessToken,
-          refresh_token: testRefreshToken,
-          shop_id: shopId,
-        };
-      }
-      
-      throw new Error(`Token not found for shop ${shopId}. Please authenticate first. Check: 1) User logged into Supabase 2) Shopee token saved to database 3) RLS policies allow access`);
-    }
+  console.log(`[SYNC] user_shops query result:`, { 
+    found: !!userShopData, 
+    error: userShopError?.message,
+    hasAccessToken: !!userShopData?.access_token 
+  });
 
+  if (!userShopError && userShopData?.access_token) {
+    return {
+      access_token: userShopData.access_token,
+      refresh_token: userShopData.refresh_token,
+      shop_id: userShopData.shop_id,
+    };
+  }
+
+  // 3. Fallback: Tìm trong bảng shopee_tokens (cũ)
+  const { data: tokenData, error: tokenError } = await supabase
+    .from('shopee_tokens')
+    .select('*')
+    .eq('shop_id', shopId)
+    .single();
+
+  console.log(`[SYNC] shopee_tokens query result:`, { 
+    found: !!tokenData, 
+    error: tokenError?.message 
+  });
+
+  if (!tokenError && tokenData?.access_token) {
     return {
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token,
@@ -100,11 +112,20 @@ async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: s
     };
   }
 
-  return {
-    access_token: shopData.access_token,
-    refresh_token: shopData.refresh_token,
-    shop_id: shopData.shop_id,
-  };
+  // 4. Fallback: Test tokens từ environment
+  const testAccessToken = Deno.env.get('TEST_SHOPEE_ACCESS_TOKEN');
+  const testRefreshToken = Deno.env.get('TEST_SHOPEE_REFRESH_TOKEN');
+  
+  if (testAccessToken && testRefreshToken) {
+    console.log(`[SYNC] Using test tokens for shop ${shopId}`);
+    return {
+      access_token: testAccessToken,
+      refresh_token: testRefreshToken,
+      shop_id: shopId,
+    };
+  }
+  
+  throw new Error(`Token not found for shop ${shopId}. Please authenticate first. Check: 1) User logged into Supabase 2) Shopee token saved to database (shops table) 3) RLS policies allow access`);
 }
 
 async function callShopeeAPI(
@@ -176,33 +197,34 @@ async function syncShopPerformance(supabase: any, shopId: number, userId: string
       console.error('Failed to save performance data:', performanceError);
     }
 
-    // Save individual metrics (upsert by shop_id + metric_id + user_id)
-    for (const metric of metric_list) {
-      const isPassingTarget = calculateMetricStatus(metric);
-      
-      const { error: metricError } = await supabase
+    // Batch upsert tất cả metrics cùng lúc (nhanh hơn nhiều)
+    if (metric_list && metric_list.length > 0) {
+      const now = new Date().toISOString();
+      const metricsToUpsert = metric_list.map((metric: any) => ({
+        shop_id: shopId,
+        user_id: userId,
+        metric_id: metric.metric_id,
+        metric_name: metric.metric_name,
+        metric_type: metric.metric_type,
+        parent_metric_id: metric.parent_metric_id,
+        current_period: metric.current_period,
+        last_period: metric.last_period,
+        unit: metric.unit,
+        target_value: metric.target.value,
+        target_comparator: metric.target.comparator,
+        is_passing: calculateMetricStatus(metric),
+        exemption_end_date: metric.exemption_end_date || null,
+        synced_at: now,
+      }));
+
+      const { error: metricsError } = await supabase
         .from('shop_metrics_data')
-        .upsert({
-          shop_id: shopId,
-          user_id: userId,
-          metric_id: metric.metric_id,
-          metric_name: metric.metric_name,
-          metric_type: metric.metric_type,
-          parent_metric_id: metric.parent_metric_id,
-          current_period: metric.current_period,
-          last_period: metric.last_period,
-          unit: metric.unit,
-          target_value: metric.target.value,
-          target_comparator: metric.target.comparator,
-          is_passing: isPassingTarget,
-          exemption_end_date: metric.exemption_end_date || null,
-          synced_at: new Date().toISOString(),
-        }, {
+        .upsert(metricsToUpsert, {
           onConflict: 'shop_id,metric_id,user_id',
         });
 
-      if (metricError) {
-        console.error(`Failed to save metric ${metric.metric_id}:`, metricError);
+      if (metricsError) {
+        console.error('[SYNC] Failed to batch upsert metrics:', metricsError);
       }
     }
 
@@ -218,16 +240,45 @@ async function syncShopPerformance(supabase: any, shopId: number, userId: string
   }
 }
 
+// Helper function to update sync progress (realtime)
+async function updateSyncProgress(supabase: any, shopId: number, userId: string, progress: {
+  current_step: string;
+  total_items: number;
+  processed_items: number;
+  is_syncing: boolean;
+}) {
+  await supabase
+    .from('sync_status')
+    .upsert({
+      shop_id: shopId,
+      user_id: userId,
+      sync_progress: progress,
+      is_syncing: progress.is_syncing,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'shop_id,user_id',
+    });
+}
+
 async function syncFlashSaleData(supabase: any, shopId: number, userId: string) {
   console.log(`[SYNC] Starting flash sale sync for shop ${shopId}, user ${userId}`);
   
   try {
+    // Update progress: Bắt đầu
+    await updateSyncProgress(supabase, shopId, userId, {
+      current_step: 'Đang lấy token...',
+      total_items: 0,
+      processed_items: 0,
+      is_syncing: true,
+    });
+
     // Get token with userId for better lookup
     const token = await getTokenWithAutoRefresh(supabase, shopId, userId);
     
     // Call Shopee API for flash sale list
     const timestamp = Math.floor(Date.now() / 1000);
-    const path = '/api/v2/flash_sale/get_flash_sale_list';
+    // Sử dụng Shop Flash Sale API (không phải Platform Flash Sale)
+    const path = '/api/v2/shop_flash_sale/get_shop_flash_sale_list';
     const sign = await createSignature(SHOPEE_PARTNER_ID, path, timestamp, token.access_token, shopId);
 
     const params = new URLSearchParams({
@@ -242,7 +293,15 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
     });
 
     const url = `${SHOPEE_BASE_URL}${path}?${params.toString()}`;
-    console.log('Calling Flash Sale API:', path);
+    console.log('[SYNC] Calling Shop Flash Sale API:', path);
+
+    // Update progress: Đang gọi API
+    await updateSyncProgress(supabase, shopId, userId, {
+      current_step: 'Đang lấy danh sách Flash Sale từ Shopee...',
+      total_items: 0,
+      processed_items: 0,
+      is_syncing: true,
+    });
 
     const response = await fetch(url, {
       method: 'GET',
@@ -250,12 +309,25 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
     });
 
     const apiResponse = await response.json();
+    console.log('[SYNC] Shopee API response:', JSON.stringify(apiResponse).substring(0, 500));
 
-    if (apiResponse.error && apiResponse.error !== '-') {
-      throw new Error(`Shopee API error: ${apiResponse.message}`);
+    // Shopee trả về error = "" hoặc "-" khi thành công
+    if (apiResponse.error && apiResponse.error !== '' && apiResponse.error !== '-') {
+      const errorMsg = apiResponse.message || apiResponse.msg || apiResponse.error || 'Unknown error';
+      console.error('[SYNC] Shopee API error details:', JSON.stringify(apiResponse));
+      throw new Error(`Shopee API error: ${errorMsg}`);
     }
 
     const flashSaleList = apiResponse.response?.flash_sale_list || [];
+    console.log(`[SYNC] Found ${flashSaleList.length} flash sales`);
+
+    // Update progress: Tìm thấy flash sales
+    await updateSyncProgress(supabase, shopId, userId, {
+      current_step: `Tìm thấy ${flashSaleList.length} chương trình, đang xóa dữ liệu cũ...`,
+      total_items: flashSaleList.length,
+      processed_items: 0,
+      is_syncing: true,
+    });
 
     // Clear old data for this shop
     await supabase
@@ -264,31 +336,50 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
       .eq('shop_id', shopId)
       .eq('user_id', userId);
 
-    // Save new flash sale data
-    for (const flashSale of flashSaleList) {
-      const { error: flashSaleError } = await supabase
-        .from('flash_sale_data')
-        .insert({
-          shop_id: shopId,
-          user_id: userId,
-          flash_sale_id: flashSale.flash_sale_id,
-          timeslot_id: flashSale.timeslot_id,
-          status: flashSale.status,
-          start_time: flashSale.start_time,
-          end_time: flashSale.end_time,
-          enabled_item_count: flashSale.enabled_item_count,
-          item_count: flashSale.item_count,
-          type: flashSale.type,
-          remindme_count: flashSale.remindme_count,
-          click_count: flashSale.click_count,
-          raw_response: flashSale,
-          synced_at: new Date().toISOString(),
-        });
+    // Batch insert tất cả flash sales cùng lúc (nhanh hơn nhiều)
+    if (flashSaleList.length > 0) {
+      const now = new Date().toISOString();
+      const dataToInsert = flashSaleList.map((flashSale: any) => ({
+        shop_id: shopId,
+        user_id: userId,
+        flash_sale_id: flashSale.flash_sale_id,
+        timeslot_id: flashSale.timeslot_id,
+        status: flashSale.status,
+        start_time: flashSale.start_time,
+        end_time: flashSale.end_time,
+        enabled_item_count: flashSale.enabled_item_count,
+        item_count: flashSale.item_count,
+        type: flashSale.type,
+        remindme_count: flashSale.remindme_count,
+        click_count: flashSale.click_count,
+        raw_response: flashSale,
+        synced_at: now,
+      }));
 
-      if (flashSaleError) {
-        console.error(`Failed to save flash sale ${flashSale.flash_sale_id}:`, flashSaleError);
+      // Update progress: Đang lưu
+      await updateSyncProgress(supabase, shopId, userId, {
+        current_step: `Đang lưu ${flashSaleList.length} chương trình vào database...`,
+        total_items: flashSaleList.length,
+        processed_items: Math.floor(flashSaleList.length / 2),
+        is_syncing: true,
+      });
+
+      const { error: insertError } = await supabase
+        .from('flash_sale_data')
+        .insert(dataToInsert);
+
+      if (insertError) {
+        console.error('[SYNC] Failed to batch insert flash sales:', insertError);
       }
     }
+
+    // Update progress: Hoàn thành
+    await updateSyncProgress(supabase, shopId, userId, {
+      current_step: `Hoàn thành! Đã đồng bộ ${flashSaleList.length} chương trình`,
+      total_items: flashSaleList.length,
+      processed_items: flashSaleList.length,
+      is_syncing: false,
+    });
 
     // Update sync_status
     await updateSyncStatus(supabase, shopId, userId, 'flash_sales_synced_at');
@@ -381,32 +472,34 @@ async function syncAdsCampaignData(supabase: any, shopId: number, userId: string
         const detailResponse = { response: await detailResponseRaw.json() };
 
         if (detailResponse.response?.campaign_list) {
-          for (const campaign of detailResponse.response.campaign_list) {
-            const { error: campaignError } = await supabase
-              .from('ads_campaign_data')
-              .insert({
-                shop_id: shopId,
-                user_id: userId,
-                campaign_id: campaign.campaign_id,
-                ad_type: campaign.common_info?.ad_type || 'auto',
-                name: campaign.common_info?.ad_name || '',
-                status: campaign.common_info?.campaign_status || 'unknown',
-                campaign_placement: campaign.common_info?.campaign_placement || '',
-                bidding_method: campaign.common_info?.bidding_method || '',
-                campaign_budget: campaign.common_info?.campaign_budget || 0,
-                start_time: campaign.common_info?.campaign_duration?.start_time || 0,
-                end_time: campaign.common_info?.campaign_duration?.end_time || 0,
-                item_count: campaign.common_info?.item_id_list?.length || 0,
-                roas_target: campaign.auto_bidding_info?.roas_target || null,
-                raw_response: campaign,
-                synced_at: new Date().toISOString(),
-              });
+          // Batch insert tất cả campaigns trong batch này
+          const now = new Date().toISOString();
+          const campaignsToInsert = detailResponse.response.campaign_list.map((campaign: any) => ({
+            shop_id: shopId,
+            user_id: userId,
+            campaign_id: campaign.campaign_id,
+            ad_type: campaign.common_info?.ad_type || 'auto',
+            name: campaign.common_info?.ad_name || '',
+            status: campaign.common_info?.campaign_status || 'unknown',
+            campaign_placement: campaign.common_info?.campaign_placement || '',
+            bidding_method: campaign.common_info?.bidding_method || '',
+            campaign_budget: campaign.common_info?.campaign_budget || 0,
+            start_time: campaign.common_info?.campaign_duration?.start_time || 0,
+            end_time: campaign.common_info?.campaign_duration?.end_time || 0,
+            item_count: campaign.common_info?.item_id_list?.length || 0,
+            roas_target: campaign.auto_bidding_info?.roas_target || null,
+            raw_response: campaign,
+            synced_at: now,
+          }));
 
-            if (campaignError) {
-              console.error(`Failed to save campaign ${campaign.campaign_id}:`, campaignError);
-            } else {
-              totalSaved++;
-            }
+          const { error: insertError } = await supabase
+            .from('ads_campaign_data')
+            .insert(campaignsToInsert);
+
+          if (insertError) {
+            console.error('[SYNC] Failed to batch insert campaigns:', insertError);
+          } else {
+            totalSaved += campaignsToInsert.length;
           }
         }
       } catch (batchError) {

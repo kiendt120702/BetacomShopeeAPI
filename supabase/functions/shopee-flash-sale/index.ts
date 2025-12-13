@@ -102,14 +102,38 @@ async function getTokenWithAutoRefresh(
   supabase: ReturnType<typeof createClient>,
   shopId: number
 ) {
-  const { data, error } = await supabase
-    .from('shopee_tokens')
-    .select('*')
+  // 1. Tìm token từ bảng shops (nơi frontend lưu token)
+  const { data: shopData, error: shopError } = await supabase
+    .from('shops')
+    .select('shop_id, access_token, refresh_token, expired_at, merchant_id')
     .eq('shop_id', shopId)
     .single();
 
-  if (error || !data) {
-    throw new Error('Token not found. Please authenticate first.');
+  console.log(`[TOKEN] shops table query:`, { 
+    found: !!shopData, 
+    error: shopError?.message,
+    hasAccessToken: !!shopData?.access_token 
+  });
+
+  let data = shopData;
+
+  // 2. Fallback: Tìm trong bảng shopee_tokens (cũ)
+  if (shopError || !shopData?.access_token) {
+    const { data: tokenData, error: tokenError } = await supabase
+      .from('shopee_tokens')
+      .select('*')
+      .eq('shop_id', shopId)
+      .single();
+
+    console.log(`[TOKEN] shopee_tokens query:`, { 
+      found: !!tokenData, 
+      error: tokenError?.message 
+    });
+
+    if (tokenError || !tokenData) {
+      throw new Error('Token not found. Please authenticate first.');
+    }
+    data = tokenData;
   }
 
   // Kiểm tra token có sắp hết hạn không (buffer 5 phút)
@@ -128,8 +152,18 @@ async function getTokenWithAutoRefresh(
         return data;
       }
 
-      // Lưu token mới
+      // Lưu token mới vào cả 2 bảng
       await saveToken(supabase, shopId, newToken);
+      
+      // Cập nhật bảng shops
+      await supabase.from('shops').upsert({
+        shop_id: shopId,
+        access_token: newToken.access_token,
+        refresh_token: newToken.refresh_token,
+        expired_at: Date.now() + newToken.expire_in * 1000,
+        token_updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'shop_id' });
 
       console.log('[AUTO-REFRESH] Token refreshed successfully');
       

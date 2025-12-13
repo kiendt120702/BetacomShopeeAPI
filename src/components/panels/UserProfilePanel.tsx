@@ -19,8 +19,21 @@ import {
   X,
   Store,
   Shield,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  Unplug
 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useAuth, getUserProfile, getUserShops } from '@/hooks/useAuth';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
 import { supabase } from '@/lib/supabase';
@@ -61,6 +74,7 @@ export function UserProfilePanel() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ full_name: '' });
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -192,6 +206,49 @@ export function UserProfilePanel() {
     }
   };
 
+  const handleAddShop = async () => {
+    try {
+      await connectShop();
+    } catch (err) {
+      console.error('Error adding shop:', err);
+      setMessage({ type: 'error', text: 'Không thể thêm shop. Vui lòng thử lại.' });
+    }
+  };
+
+  const handleDisconnectShop = async (shopId: number) => {
+    if (!user?.id) return;
+    
+    setDisconnecting(shopId);
+    setMessage(null);
+    
+    try {
+      // Xóa liên kết user_shops
+      const { error: userShopError } = await supabase
+        .from('user_shops')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('shop_id', shopId);
+
+      if (userShopError) throw userShopError;
+
+      // Cập nhật state
+      setShops(prev => prev.filter(s => s.shop_id !== shopId));
+      setShopInfoMap(prev => {
+        const newMap = { ...prev };
+        delete newMap[shopId];
+        return newMap;
+      });
+      
+      setMessage({ type: 'success', text: 'Đã ngắt kết nối shop thành công!' });
+      setTimeout(() => setMessage(null), 3000);
+    } catch (err) {
+      console.error('Error disconnecting shop:', err);
+      setMessage({ type: 'error', text: 'Không thể ngắt kết nối. Vui lòng thử lại.' });
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -312,12 +369,24 @@ export function UserProfilePanel() {
           </div>
 
           {/* Connected Shops - Simple list */}
-          {shops.length > 0 && (
-            <div className="pt-4 border-t">
-              <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+          <div className="pt-4 border-t">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-medium flex items-center gap-2">
                 <Store className="h-4 w-4" />
                 Shop đã kết nối ({shops.length})
               </h4>
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={handleAddShop}
+                className="text-orange-600 border-orange-300 hover:bg-orange-50"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Thêm shop
+              </Button>
+            </div>
+            
+            {shops.length > 0 ? (
               <div className="space-y-2">
                 {shops.map((shop) => {
                   const shopInfo = shopInfoMap[shop.shop_id];
@@ -327,6 +396,7 @@ export function UserProfilePanel() {
                   const tokenExpired = tokenInfo?.expired_at && 
                     (tokenInfo.expired_at * 1000 - Date.now() < 7 * 24 * 60 * 60 * 1000);
                   const needsAttention = !shop.is_active || tokenExpired;
+                  const isDisconnecting = disconnecting === shop.shop_id;
                   
                   return (
                     <div 
@@ -376,13 +446,51 @@ export function UserProfilePanel() {
                         ) : (
                           <Badge variant="default" className="bg-green-500">Hoạt động</Badge>
                         )}
+                        
+                        {/* Nút ngắt kết nối */}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button 
+                              size="sm" 
+                              variant="ghost"
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              disabled={isDisconnecting}
+                            >
+                              <Unplug className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Ngắt kết nối shop?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Bạn có chắc muốn ngắt kết nối shop "{shopInfo?.shop_name || `Shop #${shop.shop_id}`}"? 
+                                Bạn sẽ không thể quản lý shop này cho đến khi kết nối lại.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Hủy</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDisconnectShop(shop.shop_id)}
+                                className="bg-red-500 hover:bg-red-600"
+                              >
+                                {isDisconnecting ? 'Đang ngắt...' : 'Ngắt kết nối'}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Store className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>Chưa có shop nào được kết nối</p>
+                <p className="text-sm">Nhấn "Thêm shop" để bắt đầu</p>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>
