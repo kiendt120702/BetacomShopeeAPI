@@ -183,6 +183,75 @@ async function fetchWithProxy(targetUrl: string, options: RequestInit): Promise<
   return await fetch(targetUrl, options);
 }
 
+/**
+ * Refresh access token using refresh token
+ */
+async function refreshAccessToken(
+  credentials: PartnerCredentials,
+  refreshToken: string,
+  shopId: number
+): Promise<{ access_token: string; refresh_token: string; expire_in: number } | null> {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const path = '/api/v2/auth/access_token/get';
+  const sign = await createSignature(credentials.partnerKey, credentials.partnerId, path, timestamp);
+  
+  const url = `${SHOPEE_BASE_URL}${path}?partner_id=${credentials.partnerId}&timestamp=${timestamp}&sign=${sign}`;
+  
+  console.log('[SYNC] Refreshing access token for shop:', shopId);
+  
+  const response = await fetchWithProxy(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      refresh_token: refreshToken,
+      partner_id: credentials.partnerId,
+      shop_id: shopId,
+    }),
+  });
+  
+  const result = await response.json();
+  
+  if (result.error) {
+    console.error('[SYNC] Token refresh failed:', result);
+    return null;
+  }
+  
+  console.log('[SYNC] Token refreshed successfully');
+  return {
+    access_token: result.access_token,
+    refresh_token: result.refresh_token,
+    expire_in: result.expire_in,
+  };
+}
+
+/**
+ * Save refreshed token to database
+ */
+async function saveRefreshedToken(
+  supabase: any,
+  shopId: number,
+  newToken: { access_token: string; refresh_token: string; expire_in: number }
+) {
+  const expiredAt = Date.now() + newToken.expire_in * 1000;
+  
+  const { error } = await supabase
+    .from('shops')
+    .update({
+      access_token: newToken.access_token,
+      refresh_token: newToken.refresh_token,
+      expired_at: expiredAt,
+      expire_in: newToken.expire_in,
+      token_updated_at: new Date().toISOString(),
+    })
+    .eq('shop_id', shopId);
+  
+  if (error) {
+    console.error('[SYNC] Failed to save refreshed token:', error);
+  } else {
+    console.log('[SYNC] Refreshed token saved to database');
+  }
+}
+
 async function callShopeeAPI(
   supabase: any,
   credentials: PartnerCredentials,
@@ -190,26 +259,65 @@ async function callShopeeAPI(
   shopId: number,
   token: any
 ): Promise<any> {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const sign = await createSignature(credentials.partnerKey, credentials.partnerId, path, timestamp, token.access_token, shopId);
+  return callShopeeAPIWithParams(supabase, credentials, path, shopId, token, {});
+}
 
-  const params = new URLSearchParams({
-    partner_id: credentials.partnerId.toString(),
-    timestamp: timestamp.toString(),
-    access_token: token.access_token,
-    shop_id: shopId.toString(),
-    sign: sign,
-  });
+async function callShopeeAPIWithParams(
+  supabase: any,
+  credentials: PartnerCredentials,
+  path: string,
+  shopId: number,
+  token: any,
+  extraParams: Record<string, string> = {}
+): Promise<any> {
+  const makeRequest = async (accessToken: string) => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const sign = await createSignature(credentials.partnerKey, credentials.partnerId, path, timestamp, accessToken, shopId);
 
-  const url = `${SHOPEE_BASE_URL}${path}?${params.toString()}`;
-  console.log('Calling Shopee API:', path);
+    const params = new URLSearchParams({
+      partner_id: credentials.partnerId.toString(),
+      timestamp: timestamp.toString(),
+      access_token: accessToken,
+      shop_id: shopId.toString(),
+      sign: sign,
+      ...extraParams,
+    });
 
-  const response = await fetchWithProxy(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
+    const url = `${SHOPEE_BASE_URL}${path}?${params.toString()}`;
+    console.log('Calling Shopee API:', path);
 
-  return await response.json();
+    const response = await fetchWithProxy(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    return await response.json();
+  };
+
+  // First attempt
+  let result = await makeRequest(token.access_token);
+  
+  // Check if token expired and retry with refresh
+  if (result.error === 'error_auth' || result.error === 'invalid_acceess_token' || 
+      (result.message && result.message.includes('Invalid access_token'))) {
+    console.log('[SYNC] Token expired, attempting refresh...');
+    
+    const newToken = await refreshAccessToken(credentials, token.refresh_token, shopId);
+    
+    if (newToken) {
+      // Save new token
+      await saveRefreshedToken(supabase, shopId, newToken);
+      
+      // Update token object for subsequent calls
+      token.access_token = newToken.access_token;
+      token.refresh_token = newToken.refresh_token;
+      
+      // Retry with new token
+      result = await makeRequest(newToken.access_token);
+    }
+  }
+  
+  return result;
 }
 
 // Helper function to update sync progress (realtime)
@@ -249,26 +357,6 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
 
     // Get token with userId for better lookup
     const token = await getTokenWithAutoRefresh(supabase, shopId, userId);
-    
-    // Call Shopee API for flash sale list
-    const timestamp = Math.floor(Date.now() / 1000);
-    // Sử dụng Shop Flash Sale API (không phải Platform Flash Sale)
-    const path = '/api/v2/shop_flash_sale/get_shop_flash_sale_list';
-    const sign = await createSignature(credentials.partnerKey, credentials.partnerId, path, timestamp, token.access_token, shopId);
-
-    const params = new URLSearchParams({
-      partner_id: credentials.partnerId.toString(),
-      timestamp: timestamp.toString(),
-      access_token: token.access_token,
-      shop_id: shopId.toString(),
-      sign: sign,
-      type: '0',
-      offset: '0',
-      limit: '100',
-    });
-
-    const url = `${SHOPEE_BASE_URL}${path}?${params.toString()}`;
-    console.log('[SYNC] Calling Shop Flash Sale API:', path);
 
     // Update progress: Đang gọi API
     await updateSyncProgress(supabase, shopId, userId, {
@@ -278,12 +366,17 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
       is_syncing: true,
     });
 
-    const response = await fetchWithProxy(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    const apiResponse = await response.json();
+    // Call Shopee API with auto-refresh token
+    const path = '/api/v2/shop_flash_sale/get_shop_flash_sale_list';
+    const apiResponse = await callShopeeAPIWithParams(
+      supabase,
+      credentials,
+      path,
+      shopId,
+      token,
+      { type: '0', offset: '0', limit: '100' }
+    );
+    
     console.log('[SYNC] Shopee API response:', JSON.stringify(apiResponse).substring(0, 500));
 
     // Shopee trả về error = "" hoặc "-" khi thành công
@@ -377,29 +470,18 @@ async function syncAdsCampaignData(supabase: any, shopId: number, userId: string
     // Get token with userId for better lookup
     const token = await getTokenWithAutoRefresh(supabase, shopId, userId);
     
-    // Call Shopee API for campaign list
-    const timestamp = Math.floor(Date.now() / 1000);
+    // Call Shopee API for campaign list with auto-refresh
     const path = '/api/v2/ads/get_campaign_id_list';
-    const sign = await createSignature(credentials.partnerKey, credentials.partnerId, path, timestamp, token.access_token, shopId);
+    const apiResponse = await callShopeeAPIWithParams(
+      supabase,
+      credentials,
+      path,
+      shopId,
+      token,
+      { ad_type: 'all' }
+    );
 
-    const params = new URLSearchParams({
-      partner_id: credentials.partnerId.toString(),
-      timestamp: timestamp.toString(),
-      access_token: token.access_token,
-      shop_id: shopId.toString(),
-      sign: sign,
-      ad_type: 'all',
-    });
-
-    const url = `${SHOPEE_BASE_URL}${path}?${params.toString()}`;
     console.log('Calling Ads Campaign API:', path);
-
-    const response = await fetchWithProxy(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    const apiResponse = await response.json();
 
     if (apiResponse.error && apiResponse.error !== '-') {
       throw new Error(`Shopee API error: ${apiResponse.message}`);
@@ -422,30 +504,23 @@ async function syncAdsCampaignData(supabase: any, shopId: number, userId: string
       const campaignIds = batch.map((c: any) => c.campaign_id);
 
       try {
-        // Get campaign details
-        const detailTimestamp = Math.floor(Date.now() / 1000);
+        // Get campaign details with auto-refresh
         const detailPath = '/api/v2/ads/get_campaign_setting_info';
-        const detailSign = await createSignature(credentials.partnerKey, credentials.partnerId, detailPath, detailTimestamp, token.access_token, shopId);
-
-        const detailParams = new URLSearchParams({
-          partner_id: credentials.partnerId.toString(),
-          timestamp: detailTimestamp.toString(),
-          access_token: token.access_token,
-          shop_id: shopId.toString(),
-          sign: detailSign,
-          campaign_id_list: campaignIds.join(','),
-          info_type_list: '1,3', // common_info and auto_bidding_info
-        });
-
-        const detailUrl = `${SHOPEE_BASE_URL}${detailPath}?${detailParams.toString()}`;
         console.log('Calling Campaign Detail API:', detailPath);
 
-        const detailResponseRaw = await fetchWithProxy(detailUrl, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const detailApiResponse = await callShopeeAPIWithParams(
+          supabase,
+          credentials,
+          detailPath,
+          shopId,
+          token,
+          {
+            campaign_id_list: campaignIds.join(','),
+            info_type_list: '1,3', // common_info and auto_bidding_info
+          }
+        );
 
-        const detailResponse = { response: await detailResponseRaw.json() };
+        const detailResponse = { response: detailApiResponse };
 
         if (detailResponse.response?.campaign_list) {
           // Batch insert tất cả campaigns trong batch này
