@@ -56,7 +56,8 @@ interface UseShopeeAuthReturn {
 }
 
 const DEFAULT_CALLBACK =
-  import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'http://localhost:5173/auth/callback';
+  import.meta.env.VITE_SHOPEE_CALLBACK_URL || 
+  (typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : 'http://localhost:5173/auth/callback');
 
 export function useShopeeAuth(): UseShopeeAuthReturn {
   const [token, setToken] = useState<AccessToken | null>(null);
@@ -179,13 +180,20 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
     let mounted = true;
 
     async function initLoad() {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (mounted) {
-        if (authUser) {
-          setUser({ id: authUser.id, email: authUser.email });
+      try {
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (mounted) {
+          if (authUser) {
+            setUser({ id: authUser.id, email: authUser.email });
+          }
+          await loadTokenFromSource(authUser?.id);
         }
-        await loadTokenFromSource(authUser?.id);
-        setIsLoading(false);
+      } catch (err) {
+        console.error('[AUTH] Error in initLoad:', err);
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     }
 

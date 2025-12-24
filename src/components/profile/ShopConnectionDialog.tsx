@@ -66,8 +66,13 @@ export function ShopConnectionDialog({
 
   // Auto switch tab nếu không có partner nào
   useEffect(() => {
-    if (!loadingPartners && partnerAccounts.length === 0) {
-      setActiveTab('new');
+    if (!loadingPartners) {
+      // Nếu có partner thì mặc định chọn tab existing
+      if (partnerAccounts.length > 0) {
+        setActiveTab('existing');
+      } else {
+        setActiveTab('new');
+      }
     }
   }, [loadingPartners, partnerAccounts.length]);
 

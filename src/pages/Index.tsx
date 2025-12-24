@@ -8,7 +8,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
 import FlashSaleManagerPanel from '@/components/panels/FlashSaleManagerPanel';
+import FlashSalePanel from '@/components/panels/FlashSalePanel';
+import ScheduledPanel from '@/components/panels/ScheduledPanel';
 import AdsPanel from '@/components/panels/AdsPanel';
+import AdsBudgetPanel from '@/components/panels/AdsBudgetPanel';
 import UserProfilePanel from '@/components/panels/UserProfilePanel';
 // PartnerAccountsPanel đã được tích hợp vào UserProfilePanel
 
@@ -19,7 +22,7 @@ import { DemoModeBanner } from '@/components/demo/DemoModeBanner';
 import { DemoDashboard } from '@/components/demo/DemoDashboard';
 import { ShopConnectionDialog } from '@/components/profile/ShopConnectionDialog';
 
-type MenuId = 'dashboard' | 'flash-sale' | 'ads' | 'profile';
+type MenuId = 'dashboard' | 'flash-sale' | 'flash-sale-list' | 'flash-sale-schedule' | 'ads' | 'ads-budget' | 'ads-manage' | 'profile';
 
 interface MenuItem {
   id: MenuId;
@@ -27,6 +30,7 @@ interface MenuItem {
   label: string;
   icon: React.ReactNode;
   description?: string;
+  children?: MenuItem[];
 }
 
 const menuItems: MenuItem[] = [
@@ -42,7 +46,21 @@ const menuItems: MenuItem[] = [
     path: '/flash-sale',
     label: 'Flash Sale', 
     icon: <FlameIcon />,
-    description: 'Quản lý Flash Sale & Lịch hẹn giờ'
+    description: 'Quản lý Flash Sale & Lịch hẹn giờ',
+    children: [
+      {
+        id: 'flash-sale-list',
+        path: '/flash-sale',
+        label: 'Flash Sale',
+        icon: <FlameIcon />,
+      },
+      {
+        id: 'flash-sale-schedule',
+        path: '/flash-sale/schedule',
+        label: 'Lịch hẹn giờ',
+        icon: <ClockIcon />,
+      },
+    ]
   },
   { 
     id: 'ads',
@@ -75,6 +93,22 @@ function FlameIcon() {
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
     </svg>
   );
 }
@@ -143,7 +177,6 @@ function ShopSelector() {
           </svg>
         </div>
         <div className="text-left">
-          <p className="text-xs text-slate-500">Shop đang chọn</p>
           <p className="text-sm font-medium text-slate-700 max-w-[150px] truncate">
             {currentShop.shop_name || `Shop ${currentShop.shop_id}`}
           </p>
@@ -557,12 +590,35 @@ const Index = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAddShopDialog, setShowAddShopDialog] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState<string[]>(['flash-sale', 'ads']);
 
   const isShopConnected = !!effectiveToken?.shop_id;
   
-  // Get active menu from URL path
-  const activeMenu = allMenuItems.find(m => m.path === location.pathname)?.id || 'dashboard';
-  const currentMenuItem = allMenuItems.find(m => m.id === activeMenu);
+  // Get active menu from URL path - check children too
+  const getActiveMenu = () => {
+    // Check direct match first
+    const directMatch = allMenuItems.find(m => m.path === location.pathname);
+    if (directMatch) return directMatch.id;
+    
+    // Check children
+    for (const item of allMenuItems) {
+      if (item.children) {
+        const childMatch = item.children.find(c => c.path === location.pathname);
+        if (childMatch) return childMatch.id;
+      }
+    }
+    return 'dashboard';
+  };
+  
+  const activeMenu = getActiveMenu();
+  const currentMenuItem = allMenuItems.find(m => m.id === activeMenu) || 
+    allMenuItems.flatMap(m => m.children || []).find(c => c.id === activeMenu);
+
+  const toggleSubmenu = (menuId: string) => {
+    setExpandedMenus(prev => 
+      prev.includes(menuId) ? prev.filter(id => id !== menuId) : [...prev, menuId]
+    );
+  };
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -592,8 +648,11 @@ const Index = () => {
     if (!isShopConnected) {
       // Demo mode: hiển thị demo data thay vì yêu cầu kết nối
       if (isDemo) {
-        if (activeMenu === 'flash-sale') {
+        if (activeMenu === 'flash-sale' || activeMenu === 'flash-sale-list') {
           return <DemoFlashSalePanel />;
+        }
+        if (activeMenu === 'flash-sale-schedule') {
+          return <DemoFlashSalePanel />; // TODO: Add DemoScheduledPanel
         }
         if (activeMenu === 'ads') {
           return <DemoAdsPanel />;
@@ -604,9 +663,15 @@ const Index = () => {
     
     switch (activeMenu) {
       case 'flash-sale':
-        return <FlashSaleManagerPanel />;
+      case 'flash-sale-list':
+        return <FlashSalePanel />;
+      case 'flash-sale-schedule':
+        return <ScheduledPanel />;
       case 'ads':
+      case 'ads-manage':
         return <AdsPanel />;
+      case 'ads-budget':
+        return <AdsBudgetPanel />;
       default:
         return <DashboardPanel onNavigate={handleNavigate} />;
     }
@@ -667,30 +732,89 @@ const Index = () => {
         {/* Navigation */}
         <nav className="flex-1 p-2 space-y-1">
           {allMenuItems.map((item) => {
-            const isActive = activeMenu === item.id;
+            const isActive = activeMenu === item.id || item.children?.some(c => c.id === activeMenu);
+            const isExpanded = expandedMenus.includes(item.id);
+            const hasChildren = item.children && item.children.length > 0;
+            
             return (
-              <button
-                key={item.id}
-                onClick={() => handleNavigate(item.path)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
-                  isActive 
-                    ? "bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/25" 
-                    : "text-slate-600 hover:bg-slate-50",
-                  sidebarCollapsed && "justify-center px-2"
+              <div key={item.id}>
+                <button
+                  onClick={() => {
+                    if (hasChildren) {
+                      toggleSubmenu(item.id);
+                      // Navigate to first child if not already on a child
+                      if (!item.children?.some(c => c.id === activeMenu)) {
+                        handleNavigate(item.children![0].path);
+                      }
+                    } else {
+                      handleNavigate(item.path);
+                    }
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
+                    isActive 
+                      ? "bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/25" 
+                      : "text-slate-600 hover:bg-slate-50",
+                    sidebarCollapsed && "justify-center px-2"
+                  )}
+                  title={sidebarCollapsed ? item.label : undefined}
+                >
+                  <span className={cn(
+                    "transition-colors",
+                    isActive ? "text-white" : "text-slate-400 group-hover:text-orange-500"
+                  )}>
+                    {item.icon}
+                  </span>
+                  {!sidebarCollapsed && (
+                    <>
+                      <span className="font-medium text-sm flex-1 text-left">{item.label}</span>
+                      {hasChildren && (
+                        <svg 
+                          className={cn(
+                            "w-4 h-4 transition-transform",
+                            isExpanded ? "rotate-180" : "",
+                            isActive ? "text-white" : "text-slate-400"
+                          )} 
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      )}
+                    </>
+                  )}
+                </button>
+                
+                {/* Submenu */}
+                {hasChildren && isExpanded && !sidebarCollapsed && (
+                  <div className="ml-4 mt-1 space-y-1">
+                    {item.children!.map((child) => {
+                      const isChildActive = activeMenu === child.id;
+                      return (
+                        <button
+                          key={child.id}
+                          onClick={() => handleNavigate(child.path)}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group",
+                            isChildActive 
+                              ? "bg-orange-50 text-orange-600 border-l-2 border-orange-500" 
+                              : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                          )}
+                        >
+                          <span className={cn(
+                            "transition-colors",
+                            isChildActive ? "text-orange-500" : "text-slate-400 group-hover:text-orange-500"
+                          )}>
+                            {child.icon}
+                          </span>
+                          <span className="text-sm">{child.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
-                title={sidebarCollapsed ? item.label : undefined}
-              >
-                <span className={cn(
-                  "transition-colors",
-                  isActive ? "text-white" : "text-slate-400 group-hover:text-orange-500"
-                )}>
-                  {item.icon}
-                </span>
-                {!sidebarCollapsed && (
-                  <span className="font-medium text-sm">{item.label}</span>
-                )}
-              </button>
+              </div>
             );
           })}
         </nav>

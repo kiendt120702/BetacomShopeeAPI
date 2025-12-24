@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=omgvvnqwroypavmpwbup",
+      "headers": {
+        "Authorization": "Bearer sbp_21a9c174d11146f40cde9f07e1bef61e65215c89"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "list_tables",
+        "apply_migration",
+        "get_logs",
+        "execute_sql"
+      ]
+    }
+  }
+}

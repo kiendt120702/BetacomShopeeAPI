@@ -60,7 +60,7 @@ type HourSelection = Record<number, number[]>;
 
 type TabType = 'schedule' | 'saved' | 'history';
 
-export default function AdsPanel() {
+export default function AdsBudgetPanel() {
   const { toast } = useToast();
   const { token, isAuthenticated } = useShopeeAuth();
   

@@ -3,19 +3,12 @@
  * Đọc từ Supabase DB, sync từ Shopee API chạy ngầm
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -53,12 +46,6 @@ interface SyncProgress {
   total_items: number;
   processed_items: number;
   is_syncing: boolean;
-}
-
-interface SyncStatus {
-  flash_sales_synced_at: string | null;
-  is_syncing: boolean;
-  sync_progress?: SyncProgress;
 }
 
 interface ItemInfo {
@@ -101,13 +88,16 @@ const TYPE_MAP: Record<number, { label: string; color: string }> = {
 
 const TYPE_PRIORITY: Record<number, number> = { 2: 1, 1: 2, 3: 3 };
 
-export default function FlashSalePanel() {
+export interface FlashSalePanelRef {
+  triggerSync: () => Promise<void>;
+}
+
+const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   const { toast } = useToast();
   const { token, isAuthenticated, user } = useShopeeAuth();
   
   // Data state - từ Supabase DB
   const [flashSales, setFlashSales] = useState<FlashSale[]>([]);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
@@ -145,6 +135,11 @@ export default function FlashSalePanel() {
     synced: 0,
   });
 
+  // Expose triggerSync to parent via ref
+  useImperativeHandle(ref, () => ({
+    triggerSync
+  }));
+
   const formatDate = (timestamp: number) => {
     return new Date(timestamp * 1000).toLocaleString('vi-VN', {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -152,13 +147,6 @@ export default function FlashSalePanel() {
   };
 
   const formatPrice = (price: number) => new Intl.NumberFormat('vi-VN').format(price) + 'đ';
-
-  const formatSyncTime = (isoString: string | null) => {
-    if (!isoString) return 'Chưa sync';
-    return new Date(isoString).toLocaleString('vi-VN', {
-      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-    });
-  };
 
   // ============================================
   // LOAD DATA FROM SUPABASE DB (Sync-First)
@@ -189,28 +177,6 @@ export default function FlashSalePanel() {
       console.error('Error loading flash sales from DB:', err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Load sync status
-  const loadSyncStatus = async () => {
-    if (!token?.shop_id) return;
-    
-    try {
-      // Load theo shop_id, lấy record mới nhất
-      const { data, error } = await supabase
-        .from('sync_status')
-        .select('flash_sales_synced_at, is_syncing')
-        .eq('shop_id', token.shop_id)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (!error && data) {
-        setSyncStatus(data);
-      }
-    } catch (err) {
-      console.error('Error loading sync status:', err);
     }
   };
 
@@ -300,7 +266,6 @@ export default function FlashSalePanel() {
       
       // Reload data từ DB
       await loadFlashSalesFromDB();
-      await loadSyncStatus();
       
     } catch (err) {
       supabase.removeChannel(progressChannel);
@@ -324,7 +289,6 @@ export default function FlashSalePanel() {
 
     // Load initial data
     loadFlashSalesFromDB();
-    loadSyncStatus();
   }, [token?.shop_id]);
 
   // ============================================
@@ -523,68 +487,57 @@ export default function FlashSalePanel() {
   // RENDER
   // ============================================
 
-  return (
-    <div className="flex flex-col bg-slate-50 h-full overflow-hidden">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-500 rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-slate-800">Flash Sale</h2>
-              <p className="text-sm text-slate-400">
-                {filteredSales.length} chương trình
-                {totalPages > 1 && ` • Trang ${currentPage}/${totalPages}`}
-                {syncStatus && (
-                  <span className="ml-2 text-slate-300">
-                    • Sync: {formatSyncTime(syncStatus.flash_sales_synced_at)}
-                  </span>
-                )}
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3">
-            <Select value={filterType} onValueChange={(value) => { setFilterType(value); setCurrentPage(1); }}>
-              <SelectTrigger className="w-40 bg-slate-50">
-                <SelectValue placeholder="Trạng thái" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">Tất cả</SelectItem>
-                <SelectItem value="2">🔥 Đang chạy</SelectItem>
-                <SelectItem value="1">⏳ Sắp tới</SelectItem>
-                <SelectItem value="3">✓ Kết thúc</SelectItem>
-              </SelectContent>
-            </Select>
+  const formatTimeSlot = (startTime: number, endTime: number) => {
+    const start = new Date(startTime * 1000);
+    const end = new Date(endTime * 1000);
+    const startStr = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')} ${String(start.getDate()).padStart(2, '0')}-${String(start.getMonth() + 1).padStart(2, '0')}-${start.getFullYear()}`;
+    const endStr = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+    return `${startStr} - ${endStr}`;
+  };
 
-            {totalPages > 1 && (
-              <div className="flex items-center gap-2 text-sm">
-                <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}>←</Button>
-                <span className="px-2 py-1 bg-slate-100 rounded text-xs">{currentPage}/{totalPages}</span>
-                <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>→</Button>
-              </div>
-            )}
-            
-            <Button 
-              className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600" 
-              onClick={triggerSync} 
-              disabled={syncing || !isAuthenticated}
-            >
-              {syncing ? '⟳ Đang sync...' : '🔄 Sync dữ liệu'}
-            </Button>
+  const FILTER_TABS = [
+    { value: '0', label: 'Tất cả' },
+    { value: '2', label: 'Đang diễn ra' },
+    { value: '1', label: 'Sắp diễn ra' },
+    { value: '3', label: 'Đã kết thúc' },
+  ];
+
+  return (
+    <div className="flex flex-col bg-white h-full overflow-hidden">
+      {/* Filter Tabs */}
+      <div className="border-b border-gray-200">
+        <div className="flex items-center justify-between px-4">
+          <div className="flex items-center gap-8">
+            {FILTER_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => { setFilterType(tab.value); setCurrentPage(1); }}
+                className={`py-3 text-sm font-medium border-b-2 transition-colors ${
+                  filterType === tab.value
+                    ? 'border-orange-500 text-orange-500'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
+          <Button 
+            className="bg-orange-500 hover:bg-orange-600 text-sm" 
+            size="sm"
+            onClick={triggerSync}
+            disabled={syncing || !isAuthenticated}
+          >
+            {syncing ? 'Đang đồng bộ...' : 'Đồng bộ dữ liệu'}
+          </Button>
         </div>
       </div>
 
       {/* Table */}
-      <div className="flex-1 bg-white overflow-auto">
+      <div className="flex-1 overflow-auto">
         {!isAuthenticated ? (
           <div className="h-full flex items-center justify-center">
-            <p className="text-slate-500">Vui lòng kết nối Shopee để tiếp tục</p>
+            <p className="text-gray-500">Vui lòng kết nối Shopee để tiếp tục</p>
           </div>
         ) : loading ? (
           <div className="h-full flex items-center justify-center">
@@ -593,91 +546,78 @@ export default function FlashSalePanel() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <p className="text-slate-400">Đang tải từ database...</p>
+              <p className="text-gray-400">Đang tải từ database...</p>
             </div>
           </div>
         ) : paginatedSales.length === 0 ? (
           <div className="h-full flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-              <p className="text-slate-400 mb-4">Chưa có dữ liệu Flash Sale</p>
-              <Button onClick={triggerSync} disabled={syncing}>
-                {syncing ? 'Đang sync...' : 'Sync dữ liệu từ Shopee'}
-              </Button>
-            </div>
+            <p className="text-gray-400">Chưa có khung giờ Flash Sale</p>
           </div>
         ) : (
-          <div className="overflow-auto max-h-[calc(100vh-200px)]">
-            <Table className="min-w-[700px] w-full">
-              <TableHeader className="sticky top-0 bg-slate-50 z-10">
-                <TableRow>
-                  <TableHead className="w-[160px]">Thời gian</TableHead>
-                  <TableHead className="text-center w-[80px]">Trạng thái</TableHead>
-                  <TableHead className="text-center w-[70px]">SP</TableHead>
-                  <TableHead className="text-center w-[50px]">Clicks</TableHead>
-                  <TableHead className="text-center w-[50px]">Nhắc</TableHead>
-                  <TableHead className="text-center w-[180px]">Hành động</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedSales.map((sale) => {
-                  const typeInfo = TYPE_MAP[sale.type];
-                  const statusInfo = STATUS_MAP[sale.status];
-                  
-                  return (
-                    <TableRow key={sale.id} className="hover:bg-slate-50">
-                      <TableCell>
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${typeInfo?.color}`}>{typeInfo?.label}</span>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusInfo?.color}`}>{statusInfo?.label}</span>
-                          </div>
-                          <p className="font-medium text-slate-800 text-sm">{formatDate(sale.start_time)}</p>
-                          <p className="text-xs text-slate-400">→ {formatDate(sale.end_time)}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${typeInfo?.color}`}>{typeInfo?.label}</span>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className="font-medium text-slate-700 text-sm">{sale.enabled_item_count}</span>
-                        <span className="text-slate-400 text-sm">/{sale.item_count}</span>
-                      </TableCell>
-                      <TableCell className="text-center font-medium text-slate-700 text-sm">{sale.click_count}</TableCell>
-                      <TableCell className="text-center font-medium text-slate-700 text-sm">{sale.remindme_count}</TableCell>
-                      <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleSelectSale(sale)} className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 h-7 px-2 text-xs">
-                            <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                            </svg>
-                            Chi tiết
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={async () => { setSelectedSale(sale); await fetchItems(sale.flash_sale_id); setSelectedTimeSlots([]); setShowCopyDialog(true); fetchTimeSlots(); }} className="text-green-600 hover:text-green-700 hover:bg-green-50 h-7 px-2">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => { setSelectedSale(sale); setShowDeleteConfirm(true); }} className="text-red-600 hover:text-red-700 hover:bg-red-50 h-7 px-2">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow className="border-b">
+                <TableHead className="text-gray-600 font-medium py-3">Khung giờ</TableHead>
+                <TableHead className="text-gray-600 font-medium py-3">Sản Phẩm</TableHead>
+                <TableHead className="text-gray-600 font-medium py-3">Trạng thái</TableHead>
+                <TableHead className="text-gray-600 font-medium py-3">Thao tác</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedSales.map((sale) => {
+                const typeInfo = TYPE_MAP[sale.type];
+                
+                return (
+                  <TableRow key={sale.id} className="border-b hover:bg-gray-50">
+                    <TableCell className="py-4">
+                      <div className="font-medium text-sm">
+                        {formatTimeSlot(sale.start_time, sale.end_time)}
+                        {sale.type === 2 && <span className="text-orange-500 ml-1">+1</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-4">
+                      <div>
+                        <span className="text-orange-500 font-medium">Bật Flash Sale </span>
+                        <span className="text-orange-500">{sale.enabled_item_count}</span>
+                      </div>
+                      <div className="text-sm text-gray-500">Số sản phẩm tham gia {sale.item_count}</div>
+                    </TableCell>
+                    <TableCell className="py-4">
+                      <span className={`text-sm ${typeInfo?.color || 'text-gray-500'}`}>
+                        {typeInfo?.label || 'Không xác định'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="py-4">
+                      <button
+                        onClick={() => { 
+                          setSelectedSale(sale); 
+                          setSelectedTimeSlots([]); 
+                          setShowCopyDialog(true); 
+                          // Load data in background
+                          fetchItems(sale.flash_sale_id); 
+                          fetchTimeSlots(); 
+                        }}
+                        className="text-blue-500 hover:text-blue-600 text-sm"
+                      >
+                        Sao chép
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         )}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}>←</Button>
+          <span className="text-sm text-gray-500">{currentPage}/{totalPages}</span>
+          <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>→</Button>
+        </div>
+      )}
 
       {/* Sync Progress Dialog */}
       <Dialog open={showSyncProgress} onOpenChange={setShowSyncProgress}>
@@ -929,18 +869,40 @@ export default function FlashSalePanel() {
               {loadingTimeSlots ? (
                 <div className="text-center py-8 text-slate-400">Đang tải time slots...</div>
               ) : (
-                <div className="grid grid-cols-2 gap-2 max-h-[300px] overflow-y-auto">
-                  {timeSlots.map(slot => (
-                    <label key={slot.timeslot_id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedTimeSlots.includes(slot.timeslot_id) ? 'border-orange-500 bg-orange-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                      <Checkbox checked={selectedTimeSlots.includes(slot.timeslot_id)} onCheckedChange={() => {
-                        setSelectedTimeSlots(prev => prev.includes(slot.timeslot_id) ? prev.filter(id => id !== slot.timeslot_id) : [...prev, slot.timeslot_id]);
-                      }} />
-                      <div>
-                        <p className="font-medium text-sm">{formatDate(slot.start_time)}</p>
-                        <p className="text-xs text-slate-400">→ {formatDate(slot.end_time)}</p>
-                      </div>
-                    </label>
-                  ))}
+                <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
+                  {timeSlots.map(slot => {
+                    const startDate = new Date(slot.start_time * 1000);
+                    const endDate = new Date(slot.end_time * 1000);
+                    const dayStr = startDate.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                    const startTimeStr = startDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                    const endTimeStr = endDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                    
+                    return (
+                      <label 
+                        key={slot.timeslot_id} 
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedTimeSlots.includes(slot.timeslot_id) 
+                            ? 'border-orange-500 bg-orange-50' 
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Checkbox 
+                          checked={selectedTimeSlots.includes(slot.timeslot_id)} 
+                          onCheckedChange={() => {
+                            setSelectedTimeSlots(prev => 
+                              prev.includes(slot.timeslot_id) 
+                                ? prev.filter(id => id !== slot.timeslot_id) 
+                                : [...prev, slot.timeslot_id]
+                            );
+                          }} 
+                        />
+                        <div className="flex-1 flex items-center justify-between">
+                          <span className="font-medium text-sm text-slate-700">{dayStr}</span>
+                          <span className="text-sm text-slate-500">{startTimeStr} - {endTimeStr}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -956,4 +918,8 @@ export default function FlashSalePanel() {
       </Dialog>
     </div>
   );
-}
+});
+
+FlashSalePanel.displayName = 'FlashSalePanel';
+
+export default FlashSalePanel;

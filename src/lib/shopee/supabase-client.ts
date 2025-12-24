@@ -50,6 +50,8 @@ export async function authenticateWithCode(
   shopId?: number,
   partnerAccountId?: string
 ): Promise<AccessToken> {
+  console.log('[Shopee] authenticateWithCode called:', { code: code.substring(0, 10) + '...', shopId, partnerAccountId });
+  
   const { data, error } = await supabase.functions.invoke('shopee-auth', {
     body: {
       action: 'get-token',
@@ -59,6 +61,8 @@ export async function authenticateWithCode(
     },
   });
 
+  console.log('[Shopee] authenticateWithCode response:', { data, error });
+
   if (error) {
     throw new Error(error.message || 'Failed to authenticate');
   }
@@ -67,7 +71,15 @@ export async function authenticateWithCode(
     throw new Error(data.message || data.error);
   }
 
-  return data as AccessToken;
+  // Đảm bảo shop_id có giá trị (lấy từ param nếu API không trả về)
+  const token: AccessToken = {
+    ...data,
+    shop_id: data.shop_id || shopId,
+  };
+  
+  console.log('[Shopee] Final token:', { shop_id: token.shop_id, has_access_token: !!token.access_token });
+
+  return token;
 }
 
 /**
