@@ -40,16 +40,15 @@ async function getPartnerCredentials(
 ): Promise<PartnerCredentials> {
   const { data, error } = await supabase
     .from('shops')
-    .select('partner_account_id, partner_accounts(partner_id, partner_key)')
+    .select('partner_id, partner_key')
     .eq('shop_id', shopId)
     .single();
 
-  if (data?.partner_accounts && !error) {
-    const pa = data.partner_accounts as { partner_id: number; partner_key: string };
-    console.log('[PARTNER] Using partner from database:', pa.partner_id);
+  if (data?.partner_id && data?.partner_key && !error) {
+    console.log('[PARTNER] Using partner from shop:', data.partner_id);
     return {
-      partnerId: pa.partner_id,
-      partnerKey: pa.partner_key,
+      partnerId: data.partner_id,
+      partnerKey: data.partner_key,
     };
   }
 

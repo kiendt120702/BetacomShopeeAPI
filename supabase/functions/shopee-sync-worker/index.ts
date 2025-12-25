@@ -37,16 +37,15 @@ async function getPartnerCredentials(
   // Tìm partner từ shop
   const { data, error } = await supabase
     .from('shops')
-    .select('partner_account_id, partner_accounts(partner_id, partner_key)')
+    .select('partner_id, partner_key')
     .eq('shop_id', shopId)
     .single();
 
-  if (data?.partner_accounts && !error) {
-    const pa = data.partner_accounts as { partner_id: number; partner_key: string };
-    console.log('[PARTNER] Using partner from database:', pa.partner_id);
+  if (data?.partner_id && data?.partner_key && !error) {
+    console.log('[PARTNER] Using partner from shop:', data.partner_id);
     return {
-      partnerId: pa.partner_id,
-      partnerKey: pa.partner_key,
+      partnerId: data.partner_id,
+      partnerKey: data.partner_key,
     };
   }
 
@@ -133,27 +132,7 @@ async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: s
     };
   }
 
-  // 3. Fallback: Tìm trong bảng shopee_tokens (cũ)
-  const { data: tokenData, error: tokenError } = await supabase
-    .from('shopee_tokens')
-    .select('*')
-    .eq('shop_id', shopId)
-    .single();
-
-  console.log(`[SYNC] shopee_tokens query result:`, { 
-    found: !!tokenData, 
-    error: tokenError?.message 
-  });
-
-  if (!tokenError && tokenData?.access_token) {
-    return {
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token,
-      shop_id: tokenData.shop_id,
-    };
-  }
-
-  // 4. Fallback: Test tokens từ environment
+  // 3. Fallback: Test tokens từ environment
   const testAccessToken = Deno.env.get('TEST_SHOPEE_ACCESS_TOKEN');
   const testRefreshToken = Deno.env.get('TEST_SHOPEE_REFRESH_TOKEN');
   

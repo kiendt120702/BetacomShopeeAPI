@@ -1,7 +1,7 @@
 /**
  * Supabase Edge Function: Shopee Authentication
  * Xử lý OAuth flow với Shopee API
- * Hỗ trợ multi-partner: lấy credentials từ database hoặc fallback env
+ * Partner credentials được lưu trực tiếp trong bảng shops
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
@@ -13,7 +13,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Shopee API config (fallback nếu không có partner_account_id)
+// Shopee API config (fallback nếu không có partner_info)
 const DEFAULT_PARTNER_ID = Number(Deno.env.get('SHOPEE_PARTNER_ID'));
 const DEFAULT_PARTNER_KEY = Deno.env.get('SHOPEE_PARTNER_KEY') || '';
 const SHOPEE_BASE_URL = Deno.env.get('SHOPEE_BASE_URL') || 'https://partner.shopeemobile.com';
@@ -27,52 +27,51 @@ const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 interface PartnerCredentials {
   partnerId: number;
   partnerKey: string;
-  partnerAccountId?: string;
+  partnerName?: string;
+  partnerCreatedBy?: string;
+}
+
+// Interface cho partner info từ request
+interface PartnerInfo {
+  partner_id: number;
+  partner_key: string;
+  partner_name?: string;
+  partner_created_by?: string;
 }
 
 /**
- * Lấy partner credentials từ database hoặc fallback env
+ * Lấy partner credentials từ request hoặc shop hoặc fallback env
  */
 async function getPartnerCredentials(
   supabase: ReturnType<typeof createClient>,
-  partnerAccountId?: string,
+  partnerInfo?: PartnerInfo,
   shopId?: number
 ): Promise<PartnerCredentials> {
-  // Nếu có partner_account_id, lấy từ database
-  if (partnerAccountId) {
-    const { data, error } = await supabase
-      .from('partner_accounts')
-      .select('partner_id, partner_key')
-      .eq('id', partnerAccountId)
-      .eq('is_active', true)
-      .single();
-
-    if (data && !error) {
-      console.log('[PARTNER] Using partner from database:', data.partner_id);
-      return {
-        partnerId: data.partner_id,
-        partnerKey: data.partner_key,
-        partnerAccountId,
-      };
-    }
-    console.warn('[PARTNER] Partner account not found, falling back to env');
+  // Nếu có partner_info từ request, dùng trực tiếp
+  if (partnerInfo?.partner_id && partnerInfo?.partner_key) {
+    console.log('[PARTNER] Using partner from request:', partnerInfo.partner_id);
+    return {
+      partnerId: partnerInfo.partner_id,
+      partnerKey: partnerInfo.partner_key,
+      partnerName: partnerInfo.partner_name,
+      partnerCreatedBy: partnerInfo.partner_created_by,
+    };
   }
 
-  // Nếu có shop_id, tìm partner từ shop
+  // Nếu có shop_id, lấy partner từ shop
   if (shopId) {
     const { data, error } = await supabase
       .from('shops')
-      .select('partner_account_id, partner_accounts(partner_id, partner_key)')
+      .select('partner_id, partner_key, partner_name')
       .eq('shop_id', shopId)
       .single();
 
-    if (data?.partner_accounts && !error) {
-      const pa = data.partner_accounts as { partner_id: number; partner_key: string };
-      console.log('[PARTNER] Using partner from shop:', pa.partner_id);
+    if (data?.partner_id && data?.partner_key && !error) {
+      console.log('[PARTNER] Using partner from shop:', data.partner_id);
       return {
-        partnerId: pa.partner_id,
-        partnerKey: pa.partner_key,
-        partnerAccountId: data.partner_account_id,
+        partnerId: data.partner_id,
+        partnerKey: data.partner_key,
+        partnerName: data.partner_name,
       };
     }
   }
@@ -219,20 +218,37 @@ async function saveToken(
   supabase: ReturnType<typeof createClient>,
   token: Record<string, unknown>,
   userId?: string,
-  partnerAccountId?: string
+  partnerInfo?: PartnerCredentials
 ) {
+  const now = Date.now();
   const shopData: Record<string, unknown> = {
     shop_id: token.shop_id,
     access_token: token.access_token,
     refresh_token: token.refresh_token,
     expire_in: token.expire_in,
-    expired_at: Date.now() + (token.expire_in as number) * 1000,
+    expired_at: now + (token.expire_in as number) * 1000,
     token_updated_at: new Date().toISOString(),
   };
 
-  // Thêm partner_account_id nếu có
-  if (partnerAccountId) {
-    shopData.partner_account_id = partnerAccountId;
+  // Lưu auth_time (thời điểm ủy quyền) và expire_time (thời hạn ủy quyền) từ Shopee
+  // Shopee trả về expire_time là timestamp (giây) khi authorization hết hạn
+  if (token.expire_time) {
+    shopData.expire_time = token.expire_time;
+    // auth_time = expire_time - authorization_period (thường là 365 ngày = 31536000 giây)
+    // Nếu không có auth_time, tính từ expire_time
+    shopData.auth_time = token.auth_time || Math.floor(now / 1000);
+  }
+
+  // Thêm partner info nếu có
+  if (partnerInfo) {
+    shopData.partner_id = partnerInfo.partnerId;
+    shopData.partner_key = partnerInfo.partnerKey;
+    if (partnerInfo.partnerName) {
+      shopData.partner_name = partnerInfo.partnerName;
+    }
+    if (partnerInfo.partnerCreatedBy) {
+      shopData.partner_created_by = partnerInfo.partnerCreatedBy;
+    }
   }
 
   const { error } = await supabase.from('shops').upsert(shopData, {
@@ -251,7 +267,7 @@ async function saveToken(
 async function getToken(supabase: ReturnType<typeof createClient>, shopId: number) {
   const { data, error } = await supabase
     .from('shops')
-    .select('*, partner_accounts(partner_id, name)')
+    .select('*')
     .eq('shop_id', shopId)
     .single();
 
@@ -290,16 +306,15 @@ serve(async (req) => {
     switch (action) {
       case 'get-auth-url': {
         const redirectUri = body.redirect_uri || '';
-        const partnerAccountId = body.partner_account_id;
+        const partnerInfo = body.partner_info as PartnerInfo | undefined;
         
         // Lấy partner credentials
-        const credentials = await getPartnerCredentials(supabase, partnerAccountId);
+        const credentials = await getPartnerCredentials(supabase, partnerInfo);
         const authUrl = getAuthUrl(credentials, redirectUri);
 
         return new Response(JSON.stringify({ 
           auth_url: authUrl,
           partner_id: credentials.partnerId,
-          partner_account_id: credentials.partnerAccountId,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -309,10 +324,10 @@ serve(async (req) => {
         const code = body.code || '';
         const shopId = body.shop_id ? Number(body.shop_id) : undefined;
         const mainAccountId = body.main_account_id ? Number(body.main_account_id) : undefined;
-        const partnerAccountId = body.partner_account_id;
+        const partnerInfo = body.partner_info as PartnerInfo | undefined;
 
         // Lấy partner credentials
-        const credentials = await getPartnerCredentials(supabase, partnerAccountId, shopId);
+        const credentials = await getPartnerCredentials(supabase, partnerInfo, shopId);
         const token = await getAccessToken(credentials, code, shopId, mainAccountId);
 
         if (token.error) {
@@ -326,11 +341,10 @@ serve(async (req) => {
         const tokenWithShopId = {
           ...token,
           shop_id: token.shop_id || shopId,
-          partner_account_id: credentials.partnerAccountId,
         };
 
-        // Save token to database
-        await saveToken(supabase, tokenWithShopId, userId, credentials.partnerAccountId);
+        // Save token to database với partner info
+        await saveToken(supabase, tokenWithShopId, userId, credentials);
 
         return new Response(JSON.stringify(tokenWithShopId), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -338,10 +352,11 @@ serve(async (req) => {
       }
 
       case 'refresh-token': {
-        const { refresh_token, shop_id, merchant_id, partner_account_id } = body;
+        const { refresh_token, shop_id, merchant_id } = body;
+        const partnerInfo = body.partner_info as PartnerInfo | undefined;
 
         // Lấy partner credentials
-        const credentials = await getPartnerCredentials(supabase, partner_account_id, shop_id);
+        const credentials = await getPartnerCredentials(supabase, partnerInfo, shop_id);
         const token = await refreshAccessToken(credentials, refresh_token, shop_id, merchant_id);
 
         if (token.error) {
@@ -352,40 +367,13 @@ serve(async (req) => {
         }
 
         // Save new token to database
-        await saveToken(supabase, { ...token, shop_id }, userId, credentials.partnerAccountId);
+        await saveToken(supabase, { ...token, shop_id }, userId, credentials);
 
         return new Response(JSON.stringify(token), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
       
-      case 'list-partner-accounts': {
-        // Chỉ admin mới được list partner accounts
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', userId)
-          .single();
-
-        if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
-          return new Response(JSON.stringify({ error: 'Unauthorized', success: false }), {
-            status: 403,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-
-        const { data: partners, error } = await supabase
-          .from('partner_accounts')
-          .select('id, partner_id, name, description, is_active, created_at')
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        return new Response(JSON.stringify({ partners: partners || [] }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
       case 'get-stored-token': {
         const shopId = Number(body.shop_id);
 

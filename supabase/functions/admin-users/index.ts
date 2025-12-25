@@ -35,14 +35,18 @@ serve(async (req) => {
       });
     }
 
-    // Check if current user is admin or super_admin
+    // Check if current user is admin or super_admin using role_id join
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('role')
+      .select('id, roles(name)')
       .eq('id', currentUser.id)
       .single();
 
-    if (!profile || (profile.role !== 'admin' && profile.role !== 'super_admin')) {
+    const currentRoleName = (profile?.roles as any)?.name;
+    const isAdmin = currentRoleName === 'admin' || currentRoleName === 'super_admin';
+    const isSuperAdmin = currentRoleName === 'super_admin';
+
+    if (!profile || !isAdmin) {
       return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -61,7 +65,7 @@ serve(async (req) => {
       }
 
       // Only super_admin can create admin/super_admin
-      if ((role === 'admin' || role === 'super_admin') && profile.role !== 'super_admin') {
+      if ((role === 'admin' || role === 'super_admin') && !isSuperAdmin) {
         return new Response(JSON.stringify({ error: 'Only Super Admin can create Admin users' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -92,6 +96,7 @@ serve(async (req) => {
         // Map role to role name in roles table
         const roleNameMap: Record<string, string> = {
           'user': 'member',
+          'member': 'member',
           'admin': 'admin',
           'super_admin': 'super_admin',
         };
@@ -111,7 +116,6 @@ serve(async (req) => {
           .from('profiles')
           .update({ 
             full_name: full_name || null,
-            role: role || 'user',
             role_id: targetRole?.id,
             email: email,
           })
@@ -127,7 +131,6 @@ serve(async (req) => {
               id: newUser.user.id,
               email: email,
               full_name: full_name || null,
-              role: role || 'user',
               role_id: targetRole?.id,
             });
         }
@@ -157,18 +160,19 @@ serve(async (req) => {
       // Check target user's role
       const { data: targetProfile } = await supabaseAdmin
         .from('profiles')
-        .select('role')
+        .select('id, roles(name)')
         .eq('id', user_id)
         .single();
 
+      const targetRoleName = (targetProfile?.roles as any)?.name;
+      const targetIsAdmin = targetRoleName === 'admin' || targetRoleName === 'super_admin';
+
       // Only super_admin can delete admin/super_admin
-      if (targetProfile && (targetProfile.role === 'admin' || targetProfile.role === 'super_admin')) {
-        if (profile.role !== 'super_admin') {
-          return new Response(JSON.stringify({ error: 'Only Super Admin can delete Admin users' }), {
-            status: 403,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+      if (targetIsAdmin && !isSuperAdmin) {
+        return new Response(JSON.stringify({ error: 'Only Super Admin can delete Admin users' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
 
       // 1. Delete shop_members

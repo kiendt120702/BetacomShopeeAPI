@@ -39,16 +39,15 @@ async function getPartnerCredentials(
 ): Promise<PartnerCredentials> {
   const { data, error } = await supabase
     .from('shops')
-    .select('partner_account_id, partner_accounts(partner_id, partner_key)')
+    .select('partner_id, partner_key')
     .eq('shop_id', shopId)
     .single();
 
-  if (data?.partner_accounts && !error) {
-    const pa = data.partner_accounts as { partner_id: number; partner_key: string };
-    console.log('[PARTNER] Using partner from database:', pa.partner_id);
+  if (data?.partner_id && data?.partner_key && !error) {
+    console.log('[PARTNER] Using partner from shop:', data.partner_id);
     return {
-      partnerId: pa.partner_id,
-      partnerKey: pa.partner_key,
+      partnerId: data.partner_id,
+      partnerKey: data.partner_key,
     };
   }
 
@@ -230,7 +229,8 @@ async function callShopeeAPIWithRetry(
 
 // ==================== CACHE FUNCTIONS ====================
 
-interface ShopInfoCache {
+// Cache được lưu trực tiếp trong bảng shops
+interface ShopCacheData {
   shop_id: number;
   shop_name: string | null;
   region: string | null;
@@ -252,15 +252,15 @@ interface ShopInfoCache {
   expire_time: number | null;
   shop_logo: string | null;
   description: string | null;
-  cached_at: string;
+  updated_at: string;
 }
 
 async function getCachedShopInfo(
   supabase: ReturnType<typeof createClient>,
   shopId: number
-): Promise<ShopInfoCache | null> {
+): Promise<ShopCacheData | null> {
   const { data, error } = await supabase
-    .from('shop_info_cache')
+    .from('shops')
     .select('*')
     .eq('shop_id', shopId)
     .single();
@@ -269,17 +269,18 @@ async function getCachedShopInfo(
     return null;
   }
 
-  // Kiểm tra cache còn hạn không
-  const cachedAt = new Date(data.cached_at).getTime();
+  // Kiểm tra cache còn hạn không (dựa vào updated_at)
+  const updatedAt = new Date(data.updated_at).getTime();
   const now = Date.now();
   
-  if (now - cachedAt > CACHE_TTL_MS) {
-    console.log('[CACHE] Cache expired for shop:', shopId);
+  // Chỉ dùng cache nếu đã có shop_name và cache chưa quá 30 phút
+  if (!data.shop_name || (now - updatedAt > CACHE_TTL_MS)) {
+    console.log('[CACHE] Cache expired or no shop_name for shop:', shopId);
     return null;
   }
 
   console.log('[CACHE] Cache hit for shop:', shopId);
-  return data as ShopInfoCache;
+  return data as ShopCacheData;
 }
 
 async function saveShopInfoCache(
@@ -291,63 +292,47 @@ async function saveShopInfoCache(
   const shopName = shopInfo.shop_name as string || null;
   const shopLogo = (shopProfile.response as Record<string, unknown>)?.shop_logo as string || null;
   const region = shopInfo.region as string || null;
+  const description = (shopProfile.response as Record<string, unknown>)?.description as string || null;
   
-  const cacheData = {
-    shop_id: shopId,
-    shop_name: shopName,
-    region: region,
-    status: shopInfo.status || null,
-    is_cb: shopInfo.is_cb || false,
-    is_sip: shopInfo.is_sip || false,
-    is_upgraded_cbsc: shopInfo.is_upgraded_cbsc || false,
-    merchant_id: shopInfo.merchant_id || null,
-    shop_fulfillment_flag: shopInfo.shop_fulfillment_flag || null,
-    is_main_shop: shopInfo.is_main_shop || false,
-    is_direct_shop: shopInfo.is_direct_shop || false,
-    linked_main_shop_id: shopInfo.linked_main_shop_id || null,
-    linked_direct_shop_list: shopInfo.linked_direct_shop_list || null,
-    sip_affi_shops: shopInfo.sip_affi_shops || null,
-    is_one_awb: shopInfo.is_one_awb ?? null,
-    is_mart_shop: shopInfo.is_mart_shop ?? null,
-    is_outlet_shop: shopInfo.is_outlet_shop ?? null,
-    auth_time: shopInfo.auth_time || null,
-    expire_time: shopInfo.expire_time || null,
-    shop_logo: shopLogo,
-    description: (shopProfile.response as Record<string, unknown>)?.description || null,
-    cached_at: new Date().toISOString(),
+  const updateData: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
   };
+  
+  // Cập nhật tất cả thông tin shop vào bảng shops
+  if (shopName) updateData.shop_name = shopName;
+  if (shopLogo) updateData.shop_logo = shopLogo;
+  if (region) updateData.region = region;
+  if (description) updateData.description = description;
+  if (shopInfo.status !== undefined) updateData.status = shopInfo.status;
+  if (shopInfo.is_cb !== undefined) updateData.is_cb = shopInfo.is_cb;
+  if (shopInfo.is_sip !== undefined) updateData.is_sip = shopInfo.is_sip;
+  if (shopInfo.is_upgraded_cbsc !== undefined) updateData.is_upgraded_cbsc = shopInfo.is_upgraded_cbsc;
+  if (shopInfo.merchant_id !== undefined) updateData.merchant_id = shopInfo.merchant_id;
+  if (shopInfo.shop_fulfillment_flag !== undefined) updateData.shop_fulfillment_flag = shopInfo.shop_fulfillment_flag;
+  if (shopInfo.is_main_shop !== undefined) updateData.is_main_shop = shopInfo.is_main_shop;
+  if (shopInfo.is_direct_shop !== undefined) updateData.is_direct_shop = shopInfo.is_direct_shop;
+  if (shopInfo.linked_main_shop_id !== undefined) updateData.linked_main_shop_id = shopInfo.linked_main_shop_id;
+  if (shopInfo.linked_direct_shop_list !== undefined) updateData.linked_direct_shop_list = shopInfo.linked_direct_shop_list;
+  if (shopInfo.sip_affi_shops !== undefined) updateData.sip_affi_shops = shopInfo.sip_affi_shops;
+  if (shopInfo.is_one_awb !== undefined) updateData.is_one_awb = shopInfo.is_one_awb;
+  if (shopInfo.is_mart_shop !== undefined) updateData.is_mart_shop = shopInfo.is_mart_shop;
+  if (shopInfo.is_outlet_shop !== undefined) updateData.is_outlet_shop = shopInfo.is_outlet_shop;
+  if (shopInfo.auth_time !== undefined) updateData.auth_time = shopInfo.auth_time;
+  if (shopInfo.expire_time !== undefined) updateData.expire_time = shopInfo.expire_time;
 
   const { error } = await supabase
-    .from('shop_info_cache')
-    .upsert(cacheData, { onConflict: 'shop_id' });
+    .from('shops')
+    .update(updateData)
+    .eq('shop_id', shopId);
 
   if (error) {
-    console.error('[CACHE] Failed to save cache:', error);
+    console.error('[CACHE] Failed to update shops:', error);
   } else {
-    console.log('[CACHE] Saved cache for shop:', shopId);
-  }
-  
-  // Cập nhật shop_name và shop_logo vào bảng shops chính
-  if (shopName || shopLogo || region) {
-    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (shopName) updateData.shop_name = shopName;
-    if (shopLogo) updateData.shop_logo = shopLogo;
-    if (region) updateData.region = region;
-    
-    const { error: shopError } = await supabase
-      .from('shops')
-      .update(updateData)
-      .eq('shop_id', shopId);
-    
-    if (shopError) {
-      console.error('[CACHE] Failed to update shops table:', shopError);
-    } else {
-      console.log('[CACHE] Updated shops table with shop_name:', shopName);
-    }
+    console.log('[CACHE] Updated shops table for shop:', shopId, 'with name:', shopName);
   }
 }
 
-function formatCacheToResponse(cache: ShopInfoCache) {
+function formatCacheToResponse(cache: ShopCacheData) {
   return {
     info: {
       error: '',
@@ -383,7 +368,7 @@ function formatCacheToResponse(cache: ShopInfoCache) {
       },
     },
     cached: true,
-    cached_at: cache.cached_at,
+    cached_at: cache.updated_at,
   };
 }
 

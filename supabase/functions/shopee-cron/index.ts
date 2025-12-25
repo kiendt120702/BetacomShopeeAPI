@@ -13,10 +13,11 @@ serve(async (req) => {
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // Lấy danh sách shops cần sync
+    // Lấy danh sách shops cần sync từ sync_status
     const { data: shopsToSync, error } = await supabase
-      .from('shopee_tokens')
+      .from('sync_status')
       .select('shop_id, user_id')
+      .eq('auto_sync_enabled', true)
       .limit(10); // Giới hạn 10 shops mỗi lần chạy để tránh timeout
 
     if (error) {
