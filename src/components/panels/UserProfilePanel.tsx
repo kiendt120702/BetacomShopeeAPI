@@ -7,7 +7,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { UserProfileInfo } from '@/components/profile/UserProfileInfo';
 import { UserManagementPanel } from '@/components/profile/UserManagementPanel';
-import { PartnerAccountsManagement } from '@/components/profile/PartnerAccountsManagement';
 
 export function UserProfilePanel() {
   const { profile } = useAuth();
@@ -16,8 +15,8 @@ export function UserProfilePanel() {
   const isSuperAdmin = profile?.role_name === 'super_admin';
   const canManageUsers = isAdmin || isSuperAdmin;
 
-  const tabsCount = canManageUsers ? 3 : 1;
-  const gridCols = tabsCount === 3 ? 'grid-cols-3' : tabsCount === 2 ? 'grid-cols-2' : 'grid-cols-1';
+  const tabsCount = canManageUsers ? 2 : 1;
+  const gridCols = tabsCount === 2 ? 'grid-cols-2' : 'grid-cols-1';
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -25,7 +24,6 @@ export function UserProfilePanel() {
         <TabsList className={`grid w-full ${gridCols}`}>
           <TabsTrigger value="profile">Thông tin cá nhân</TabsTrigger>
           {canManageUsers && <TabsTrigger value="management">Quản lý User</TabsTrigger>}
-          {canManageUsers && <TabsTrigger value="partners">Partner Accounts</TabsTrigger>}
         </TabsList>
         
         <TabsContent value="profile" className="mt-6">
@@ -35,12 +33,6 @@ export function UserProfilePanel() {
         {canManageUsers && (
           <TabsContent value="management" className="mt-6">
             <UserManagementPanel />
-          </TabsContent>
-        )}
-        
-        {canManageUsers && (
-          <TabsContent value="partners" className="mt-6">
-            <PartnerAccountsManagement />
           </TabsContent>
         )}
       </Tabs>

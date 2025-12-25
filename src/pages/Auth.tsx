@@ -107,8 +107,7 @@ export default function AuthPage() {
           <div className="flex items-center gap-3 mb-8">
             <img src="/logo_betacom.png" alt="BETACOM" className="w-12 h-12 rounded-xl object-contain" />
             <div>
-              <h1 className="text-2xl font-bold text-slate-800">BETACOM</h1>
-              <p className="text-sm text-slate-500">Shopee Management Platform</p>
+              <h1 className="text-2xl font-bold text-red-500">BETACOM</h1>
             </div>
           </div>
 
@@ -158,8 +157,7 @@ export default function AuthPage() {
           {/* Mobile Logo (shown only on mobile) */}
           <div className="text-center mb-8 lg:hidden">
             <img src="/logo_betacom.png" alt="BETACOM" className="w-20 h-20 rounded-2xl shadow-xl shadow-orange-500/30 mb-4 object-contain" />
-            <h1 className="text-3xl font-bold text-slate-800">BETACOM</h1>
-            <p className="text-slate-500 mt-2">Shopee Management Platform</p>
+            <h1 className="text-3xl font-bold text-red-500">BETACOM</h1>
           </div>
 
         {/* Auth Card */}

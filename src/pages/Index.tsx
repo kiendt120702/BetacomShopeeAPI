@@ -11,18 +11,15 @@ import FlashSaleManagerPanel from '@/components/panels/FlashSaleManagerPanel';
 import FlashSalePanel from '@/components/panels/FlashSalePanel';
 import ScheduledPanel from '@/components/panels/ScheduledPanel';
 import AdsPanel from '@/components/panels/AdsPanel';
-import AdsBudgetPanel from '@/components/panels/AdsBudgetPanel';
 import UserProfilePanel from '@/components/panels/UserProfilePanel';
-// PartnerAccountsPanel đã được tích hợp vào UserProfilePanel
+import { UserProfileInfo } from '@/components/profile/UserProfileInfo';
+import { UserManagementPanel } from '@/components/profile/UserManagementPanel';
 
 import AuthPage from '@/pages/Auth';
 import { cn } from '@/lib/utils';
-import { isDemoAccount, DEMO_SHOP, DEMO_TOKEN } from '@/lib/demoData';
-import { DemoModeBanner } from '@/components/demo/DemoModeBanner';
-import { DemoDashboard } from '@/components/demo/DemoDashboard';
 import { ShopConnectionDialog } from '@/components/profile/ShopConnectionDialog';
 
-type MenuId = 'dashboard' | 'flash-sale' | 'flash-sale-list' | 'flash-sale-schedule' | 'ads' | 'ads-budget' | 'ads-manage' | 'profile';
+type MenuId = 'dashboard' | 'flash-sale' | 'flash-sale-list' | 'flash-sale-schedule' | 'ads' | 'ads-budget' | 'ads-manage' | 'profile' | 'profile-info' | 'profile-users';
 
 interface MenuItem {
   id: MenuId;
@@ -74,7 +71,21 @@ const menuItems: MenuItem[] = [
     path: '/profile',
     label: 'Tài khoản', 
     icon: <UserIcon />,
-    description: 'Thông tin tài khoản của bạn'
+    description: 'Thông tin tài khoản của bạn',
+    children: [
+      {
+        id: 'profile-info',
+        path: '/profile',
+        label: 'Thông tin cá nhân',
+        icon: <UserIcon />,
+      },
+      {
+        id: 'profile-users',
+        path: '/profile/users',
+        label: 'Quản lý User',
+        icon: <UsersIcon />,
+      },
+    ]
   },
 ];
 
@@ -136,8 +147,13 @@ function UserIcon() {
   );
 }
 
-
-
+function UsersIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+    </svg>
+  );
+}
 
 
 // Shop Selector Component
@@ -551,24 +567,7 @@ const Index = () => {
   const { user, profile, isAuthenticated: isUserAuthenticated, isLoading: isUserLoading, signOut } = useAuth();
   const { token, isLoading: isShopeeLoading, error: shopeeError, login: connectShopee, logout: disconnectShopee, shops } = useShopeeAuth();
   
-  // Check if demo mode
-  const isDemo = useMemo(() => isDemoAccount(user?.email), [user?.email]);
-  
-  // Demo mode: use demo data if no real shop connected
-  const effectiveToken = useMemo(() => {
-    if (token?.shop_id) return token;
-    if (isDemo) return DEMO_TOKEN;
-    return null;
-  }, [token, isDemo]);
-  
-  const effectiveShops = useMemo(() => {
-    if (shops.length > 0) return shops;
-    if (isDemo) return [DEMO_SHOP];
-    return [];
-  }, [shops, isDemo]);
-  
-  const canManageShops = profile?.role === 'admin' || profile?.role === 'super_admin' || 
-                         profile?.role_name === 'admin' || profile?.role_name === 'super_admin';
+  const canManageShops = profile?.role_name === 'admin' || profile?.role_name === 'super_admin';
   
   // All menu items (Partner Accounts integrated into Profile)
   const allMenuItems = menuItems;
@@ -592,7 +591,7 @@ const Index = () => {
   const [showAddShopDialog, setShowAddShopDialog] = useState(false);
   const [expandedMenus, setExpandedMenus] = useState<string[]>(['flash-sale', 'ads']);
 
-  const isShopConnected = !!effectiveToken?.shop_id;
+  const isShopConnected = !!token?.shop_id;
   
   // Get active menu from URL path - check children too
   const getActiveMenu = () => {
@@ -625,39 +624,30 @@ const Index = () => {
   };
 
   const renderContent = () => {
-    // Dashboard - hiển thị Demo Dashboard nếu là demo mode
+    // Dashboard
     if (activeMenu === 'dashboard') {
-      if (isDemo && !token?.shop_id) {
-        return <DemoDashboard onNavigate={handleNavigate} />;
-      }
       return <DashboardPanel onNavigate={handleNavigate} />;
     }
     
-    // Profile cũng hiển thị dù chưa kết nối shop
-    if (activeMenu === 'profile') {
+    // Profile routes
+    if (activeMenu === 'profile' || activeMenu === 'profile-info') {
       return (
-        <div className="p-6">
-          <UserProfilePanel />
+        <div className="p-6 max-w-6xl mx-auto">
+          <UserProfileInfo />
         </div>
       );
     }
     
-    // Partner Accounts đã được tích hợp vào Profile
+    if (activeMenu === 'profile-users') {
+      return (
+        <div className="p-6 max-w-6xl mx-auto">
+          <UserManagementPanel />
+        </div>
+      );
+    }
     
     // Các trang khác cần kết nối shop
     if (!isShopConnected) {
-      // Demo mode: hiển thị demo data thay vì yêu cầu kết nối
-      if (isDemo) {
-        if (activeMenu === 'flash-sale' || activeMenu === 'flash-sale-list') {
-          return <DemoFlashSalePanel />;
-        }
-        if (activeMenu === 'flash-sale-schedule') {
-          return <DemoFlashSalePanel />; // TODO: Add DemoScheduledPanel
-        }
-        if (activeMenu === 'ads') {
-          return <DemoAdsPanel />;
-        }
-      }
       return <ConnectShopBanner onConnect={handleConnectShopee} error={shopeeError} isLoading={connectingShopee} canConnect={canManageShops} />;
     }
     
@@ -669,9 +659,8 @@ const Index = () => {
         return <ScheduledPanel />;
       case 'ads':
       case 'ads-manage':
-        return <AdsPanel />;
       case 'ads-budget':
-        return <AdsBudgetPanel />;
+        return <AdsPanel />;
       default:
         return <DashboardPanel onNavigate={handleNavigate} />;
     }
@@ -696,9 +685,6 @@ const Index = () => {
 
   return (
     <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
-      {/* Demo Mode Banner */}
-      {isDemo && !token?.shop_id && <DemoModeBanner />}
-      
       <div className="flex-1 flex overflow-hidden">
       {/* Sidebar - Fixed */}
       <aside className={cn(
@@ -710,10 +696,7 @@ const Index = () => {
           {!sidebarCollapsed && (
             <div className="flex items-center gap-2">
               <img src="/logo_betacom.png" alt="BETACOM" className="w-8 h-8 rounded-lg object-contain" />
-              <div>
-                <h1 className="font-semibold text-slate-800">BETACOM</h1>
-                <p className="text-[10px] text-slate-400">Shopee Management</p>
-              </div>
+              <h1 className="font-bold text-xl text-red-500">BETACOM</h1>
             </div>
           )}
           <button 
@@ -923,224 +906,5 @@ const Index = () => {
     </div>
   );
 };
-
-// Demo Flash Sale Panel - Hiển thị demo data cho reviewer
-function DemoFlashSalePanel() {
-  const { DEMO_FLASH_SALES, DEMO_SCHEDULED_TASKS } = require('@/lib/demoData');
-  
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-  };
-  const formatPrice = (price: number) => new Intl.NumberFormat('vi-VN').format(price) + 'đ';
-
-  return (
-    <div className="h-full flex flex-col">
-      {/* Tabs */}
-      <div className="bg-white border-b border-slate-200 px-4">
-        <div className="flex gap-1">
-          <button className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 border-orange-500 text-orange-600">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            Flash Sale
-          </button>
-          <button className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            Lịch hẹn giờ
-          </button>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-4">
-        <div className="space-y-4">
-          {DEMO_FLASH_SALES.map((sale: any) => (
-            <div key={sale.flash_sale_id} className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    sale.status === 'ongoing' ? 'bg-green-100 text-green-700' :
-                    sale.status === 'upcoming' ? 'bg-blue-100 text-blue-700' :
-                    'bg-gray-100 text-gray-600'
-                  }`}>
-                    {sale.status === 'ongoing' ? '🔥 Đang diễn ra' :
-                     sale.status === 'upcoming' ? '⏰ Sắp diễn ra' : '✓ Đã kết thúc'}
-                  </span>
-                  <span className="text-sm text-slate-500">
-                    {formatTime(sale.start_time)} - {formatTime(sale.end_time)}
-                  </span>
-                </div>
-                <span className="text-sm font-medium text-slate-700">
-                  {sale.items.length} sản phẩm
-                </span>
-              </div>
-              
-              <div className="space-y-2">
-                {sale.items.map((item: any) => (
-                  <div key={item.item_id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                    <div>
-                      <p className="font-medium text-slate-700">{item.name}</p>
-                      <p className="text-xs text-slate-500">ID: {item.item_id}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm">
-                        <span className="line-through text-slate-400">{formatPrice(item.original_price)}</span>
-                        <span className="ml-2 font-medium text-red-600">{formatPrice(item.flash_sale_price)}</span>
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        Đã bán: {item.sold}/{item.stock}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Demo Ads Panel - Hiển thị demo data cho reviewer
-function DemoAdsPanel() {
-  const { DEMO_CAMPAIGNS, DEMO_BUDGET_SCHEDULES } = require('@/lib/demoData');
-  
-  const formatPrice = (price: number) => new Intl.NumberFormat('vi-VN').format(price) + 'đ';
-  const formatDate = (timestamp: number) => {
-    if (!timestamp) return 'Không giới hạn';
-    return new Date(timestamp * 1000).toLocaleDateString('vi-VN');
-  };
-
-  return (
-    <div className="flex flex-col bg-slate-50 min-h-full">
-      {/* Budget Scheduler Section */}
-      <div className="border-b border-slate-200 bg-white p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-xl flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div>
-            <h3 className="font-semibold text-slate-800">Lịch ngân sách tự động</h3>
-            <p className="text-sm text-slate-500">{DEMO_BUDGET_SCHEDULES.length} lịch đang chờ</p>
-          </div>
-        </div>
-        
-        <div className="space-y-2">
-          {DEMO_BUDGET_SCHEDULES.map((schedule: any) => (
-            <div key={schedule.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-              <div>
-                <p className="font-medium text-slate-700">{schedule.campaign_name}</p>
-                <p className="text-xs text-slate-500">
-                  {new Date(schedule.scheduled_time).toLocaleString('vi-VN')}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="font-medium text-emerald-600">{formatPrice(schedule.budget)}</p>
-                <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">
-                  Đang chờ
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-slate-800">Quản lý Quảng cáo</h2>
-              <p className="text-sm text-slate-400">{DEMO_CAMPAIGNS.length} chiến dịch</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="flex-1 bg-white overflow-auto">
-        <table className="w-full">
-          <thead className="sticky top-0 bg-slate-50">
-            <tr>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500">Chiến dịch</th>
-              <th className="text-center px-4 py-3 text-xs font-medium text-slate-500">Loại</th>
-              <th className="text-center px-4 py-3 text-xs font-medium text-slate-500">Ngân sách</th>
-              <th className="text-center px-4 py-3 text-xs font-medium text-slate-500">Thời gian</th>
-              <th className="text-center px-4 py-3 text-xs font-medium text-slate-500">Thao tác</th>
-            </tr>
-          </thead>
-          <tbody>
-            {DEMO_CAMPAIGNS.map((campaign: any) => (
-              <tr key={campaign.campaign_id} className="border-t border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      campaign.status === 'ongoing' ? 'bg-green-100 text-green-700' :
-                      campaign.status === 'paused' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>
-                      {campaign.status === 'ongoing' ? 'Đang chạy' :
-                       campaign.status === 'paused' ? 'Tạm dừng' : 'Kết thúc'}
-                    </span>
-                  </div>
-                  <p className="font-medium text-slate-800">{campaign.name}</p>
-                  <p className="text-xs text-slate-400">ID: {campaign.campaign_id}</p>
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    campaign.ad_type === 'auto' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'
-                  }`}>
-                    {campaign.ad_type === 'auto' ? 'Tự động' : 'Thủ công'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-center font-medium text-slate-700">
-                  {formatPrice(campaign.common_info?.campaign_budget || 0)}
-                </td>
-                <td className="px-4 py-3 text-center text-xs">
-                  <div className="text-slate-600">{formatDate(campaign.common_info?.campaign_duration?.start_time)}</div>
-                  <div className="text-slate-400">→ {formatDate(campaign.common_info?.campaign_duration?.end_time)}</div>
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <div className="flex items-center justify-center gap-1">
-                    <button className="p-1.5 hover:bg-slate-100 rounded-md" title="Chỉnh sửa">
-                      <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button className={`p-1.5 rounded-md ${
-                      campaign.status === 'ongoing' ? 'hover:bg-yellow-100 text-yellow-600' : 'hover:bg-green-100 text-green-600'
-                    }`} title={campaign.status === 'ongoing' ? 'Tạm dừng' : 'Tiếp tục'}>
-                      {campaign.status === 'ongoing' ? (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 export default Index;

@@ -20,7 +20,7 @@ export const SHOPEE_CONFIG = {
   partner_id: Number(import.meta.env.VITE_SHOPEE_PARTNER_ID) || 0,
   partner_key: import.meta.env.VITE_SHOPEE_PARTNER_KEY || '',
   shop_id: Number(import.meta.env.VITE_SHOPEE_SHOP_ID) || undefined,
-  callback_url: import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'http://localhost:5173/auth/callback',
+  callback_url: import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'https://ops.betacom.agency/auth/callback',
 };
 
 // Shopee Region enum

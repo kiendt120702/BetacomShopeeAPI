@@ -27,11 +27,11 @@ interface ShopInfo {
   is_active: boolean;
 }
 
-interface PartnerAccount {
-  id: string;
+interface PartnerInfo {
   partner_id: number;
-  name: string | null;
-  is_active: boolean;
+  partner_key: string;
+  partner_name?: string;
+  partner_created_by?: string;
 }
 
 interface UseShopeeAuthReturn {
@@ -44,20 +44,16 @@ interface UseShopeeAuthReturn {
   user: { id: string; email?: string } | null;
   shops: ShopInfo[];
   selectedShopId: number | null;
-  partnerAccounts: PartnerAccount[];
-  selectedPartnerAccountId: string | null;
-  login: (callbackUrl?: string, partnerAccountId?: string) => Promise<void>;
+  login: (callbackUrl?: string, partnerAccountId?: string, partnerInfo?: PartnerInfo) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   handleCallback: (code: string, shopId?: number, partnerAccountId?: string) => Promise<void>;
   switchShop: (shopId: number) => Promise<void>;
-  loadPartnerAccounts: () => Promise<void>;
-  setSelectedPartnerAccountId: (id: string | null) => void;
 }
 
 const DEFAULT_CALLBACK =
   import.meta.env.VITE_SHOPEE_CALLBACK_URL || 
-  (typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : 'http://localhost:5173/auth/callback');
+  (typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : 'https://ops.betacom.agency/auth/callback');
 
 export function useShopeeAuth(): UseShopeeAuthReturn {
   const [token, setToken] = useState<AccessToken | null>(null);
@@ -66,33 +62,10 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
   const [shops, setShops] = useState<ShopInfo[]>([]);
   const [selectedShopId, setSelectedShopId] = useState<number | null>(null);
-  const [partnerAccounts, setPartnerAccounts] = useState<PartnerAccount[]>([]);
-  const [selectedPartnerAccountId, setSelectedPartnerAccountId] = useState<string | null>(null);
 
   const useBackend = isSupabaseConfigured();
   const isConfigured = isConfigValid() || useBackend;
   const isAuthenticated = !!token && !error;
-
-  // Load partner accounts (chỉ admin mới thấy)
-  const loadPartnerAccounts = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('partner_accounts')
-        .select('id, partner_id, name, is_active')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setPartnerAccounts(data);
-        // Auto-select first partner if none selected
-        if (data.length > 0 && !selectedPartnerAccountId) {
-          setSelectedPartnerAccountId(data[0].id);
-        }
-      }
-    } catch (err) {
-      console.warn('[AUTH] Failed to load partner accounts:', err);
-    }
-  }, [selectedPartnerAccountId]);
 
   // Function load token từ localStorage hoặc database
   const loadTokenFromSource = useCallback(async (userId?: string, targetShopId?: number) => {
@@ -226,11 +199,11 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
 
   // Redirect to Shopee login
   const login = useCallback(
-    async (callbackUrl = DEFAULT_CALLBACK, partnerAccountId?: string) => {
-      console.log('[AUTH] login() called, isConfigured:', isConfigured, 'callbackUrl:', callbackUrl, 'partnerAccountId:', partnerAccountId);
+    async (callbackUrl = DEFAULT_CALLBACK, partnerAccountId?: string, partnerInfo?: PartnerInfo) => {
+      console.log('[AUTH] login() called, isConfigured:', isConfigured, 'callbackUrl:', callbackUrl, 'partnerInfo:', partnerInfo);
       
-      if (!isConfigured) {
-        setError('SDK not configured. Please set credentials in .env');
+      if (!isConfigured && !partnerInfo) {
+        setError('SDK not configured. Please provide partner credentials.');
         return;
       }
 
@@ -238,13 +211,13 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
       setError(null);
 
       try {
-        // Lưu partner_account_id vào sessionStorage để dùng khi callback
-        if (partnerAccountId) {
-          sessionStorage.setItem('shopee_partner_account_id', partnerAccountId);
+        // Lưu partner info vào sessionStorage để dùng khi callback
+        if (partnerInfo) {
+          sessionStorage.setItem('shopee_partner_info', JSON.stringify(partnerInfo));
         }
         
         console.log('[AUTH] Getting authorization URL...');
-        const authUrl = await getAuthorizationUrl(callbackUrl, partnerAccountId);
+        const authUrl = await getAuthorizationUrl(callbackUrl, partnerAccountId, partnerInfo);
         console.log('[AUTH] Redirecting to:', authUrl);
         window.location.href = authUrl;
       } catch (err) {
@@ -262,11 +235,12 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
       setIsLoading(true);
       setError(null);
 
-      // Lấy partner_account_id từ sessionStorage nếu không truyền vào
-      const finalPartnerAccountId = partnerAccountId || sessionStorage.getItem('shopee_partner_account_id') || undefined;
+      // Lấy partner info từ sessionStorage
+      const partnerInfoStr = sessionStorage.getItem('shopee_partner_info');
+      const partnerInfo = partnerInfoStr ? JSON.parse(partnerInfoStr) : null;
       
       try {
-        const newToken = await authenticateWithCode(code, shopId, finalPartnerAccountId);
+        const newToken = await authenticateWithCode(code, shopId, partnerAccountId, partnerInfo);
 
         // Store locally
         await storeToken(newToken);
@@ -283,10 +257,9 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
               newToken.refresh_token,
               newToken.expired_at || Date.now() + 4 * 60 * 60 * 1000,
               newToken.merchant_id,
-              newToken.partner_account_id
+              undefined, // không còn partner_account_id
+              partnerInfo // truyền partner info để lưu vào shops
             );
-            
-            // saveUserShop đã tự động tạo shop_members, không cần duplicate code
             
             console.log('[AUTH] Shop and token saved to database');
             
@@ -305,9 +278,9 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
         }
 
         // Clear sessionStorage
-        sessionStorage.removeItem('shopee_partner_account_id');
+        sessionStorage.removeItem('shopee_partner_info');
 
-        console.log('[AUTH] Authentication successful, shop_id:', newToken.shop_id, 'partner_account_id:', finalPartnerAccountId);
+        console.log('[AUTH] Authentication successful, shop_id:', newToken.shop_id);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Authentication failed');
         throw err;
@@ -390,14 +363,10 @@ export function useShopeeAuth(): UseShopeeAuthReturn {
     user,
     shops,
     selectedShopId,
-    partnerAccounts,
-    selectedPartnerAccountId,
     login,
     logout,
     refresh,
     handleCallback,
     switchShop,
-    loadPartnerAccounts,
-    setSelectedPartnerAccountId,
   };
 }

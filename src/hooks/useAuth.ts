@@ -11,11 +11,9 @@ interface Profile {
   id: string;
   email: string;
   full_name: string | null;
-  avatar_url: string | null;
-  role: 'user' | 'admin' | 'super_admin'; // Legacy role field
-  role_name: string; // New role system
-  role_display_name: string;
-  promoted_from_user: boolean;
+  role_id: string;
+  role_name: string; // From roles table join
+  role_display_name: string; // From roles table join
   created_at: string;
   updated_at: string;
 }
@@ -187,23 +185,38 @@ export async function saveUserShop(
   refreshToken: string,
   expiredAt: number,
   merchantId?: number,
-  partnerAccountId?: string
+  _partnerAccountId?: string, // deprecated, không dùng nữa
+  partnerInfo?: {
+    partner_id: number;
+    partner_key: string;
+    partner_name?: string;
+    partner_created_by?: string;
+  }
 ) {
-  console.log('[saveUserShop] Starting...', { userId, shopId, partnerAccountId });
+  console.log('[saveUserShop] Starting...', { userId, shopId, partnerInfo });
 
-  // 1. Upsert vào bảng shops (token được lưu trong bảng shops)
+  // 1. Upsert vào bảng shops (token và partner info được lưu trong bảng shops)
+  const shopData: any = {
+    shop_id: shopId,
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expired_at: expiredAt,
+    merchant_id: merchantId,
+    token_updated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Thêm partner info nếu có
+  if (partnerInfo) {
+    shopData.partner_id = partnerInfo.partner_id;
+    shopData.partner_key = partnerInfo.partner_key;
+    shopData.partner_name = partnerInfo.partner_name;
+    shopData.partner_created_by = partnerInfo.partner_created_by;
+  }
+
   const { error: shopError } = await supabase
     .from('shops')
-    .upsert({
-      shop_id: shopId,
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expired_at: expiredAt,
-      merchant_id: merchantId,
-      partner_account_id: partnerAccountId,
-      token_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }, {
+    .upsert(shopData, {
       onConflict: 'shop_id',
     });
 
@@ -273,11 +286,14 @@ export async function getUserShops(userId: string) {
 
 // Lấy profile user với role information - tự động tạo nếu chưa có
 export async function getUserProfile(userId: string) {
-  const { data, error } = await supabase
+  console.log('[getUserProfile] Loading profile for:', userId);
+  
+  // Query profile with role join in one query
+  const { data: profileWithRole, error: joinError } = await supabase
     .from('profiles')
     .select(`
       *,
-      roles (
+      roles:role_id (
         name,
         display_name
       )
@@ -285,9 +301,37 @@ export async function getUserProfile(userId: string) {
     .eq('id', userId)
     .single();
 
-  if (error) {
+  console.log('[getUserProfile] Profile with role join:', { profileWithRole, joinError });
+
+  // Nếu join query thành công
+  if (profileWithRole && !joinError) {
+    const roleInfo = profileWithRole.roles as any;
+    const result = {
+      id: profileWithRole.id,
+      email: profileWithRole.email,
+      full_name: profileWithRole.full_name,
+      role_id: profileWithRole.role_id,
+      created_at: profileWithRole.created_at,
+      updated_at: profileWithRole.updated_at,
+      role_name: roleInfo?.name || 'member',
+      role_display_name: roleInfo?.display_name || 'Member',
+    };
+    console.log('[getUserProfile] Final result from join:', result);
+    return result;
+  }
+
+  // Fallback: Query profile separately
+  const { data: profileData, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  console.log('[getUserProfile] Profile query result:', { profileData, profileError });
+
+  if (profileError) {
     // Nếu không tìm thấy profile, tự động tạo mới
-    if (error.code === 'PGRST116') {
+    if (profileError.code === 'PGRST116') {
       console.log('[getUserProfile] Profile not found, creating new one...');
       
       // Lấy thông tin user từ auth
@@ -308,13 +352,7 @@ export async function getUserProfile(userId: string) {
           full_name: user?.user_metadata?.full_name || '',
           role_id: memberRole?.id,
         })
-        .select(`
-          *,
-          roles (
-            name,
-            display_name
-          )
-        `)
+        .select('*')
         .single();
 
       if (insertError) {
@@ -322,22 +360,50 @@ export async function getUserProfile(userId: string) {
         return null;
       }
 
-      // Transform the data to include role_name and role_display_name
       return {
         ...newProfile,
-        role_name: newProfile.roles?.name || 'member',
-        role_display_name: newProfile.roles?.display_name || 'Member',
+        role_name: 'member',
+        role_display_name: 'Member',
       };
     }
     
-    console.error('[getUserProfile] Error:', error);
+    console.error('[getUserProfile] Error:', profileError);
     return null;
   }
 
-  // Transform the data to include role_name and role_display_name
-  return {
-    ...data,
-    role_name: data.roles?.name || 'member',
-    role_display_name: data.roles?.display_name || 'Member',
+  // Query role separately
+  let roleName = 'member';
+  let roleDisplayName = 'Member';
+  
+  console.log('[getUserProfile] Profile role_id:', profileData.role_id);
+  
+  if (profileData.role_id) {
+    const { data: roleData, error: roleError } = await supabase
+      .from('roles')
+      .select('name, display_name')
+      .eq('id', profileData.role_id)
+      .single();
+    
+    console.log('[getUserProfile] Role query result:', { roleData, roleError });
+    
+    if (roleError) {
+      console.error('[getUserProfile] Role query error:', roleError);
+    }
+    
+    if (roleData) {
+      roleName = roleData.name;
+      roleDisplayName = roleData.display_name;
+    }
+  } else {
+    console.warn('[getUserProfile] No role_id found in profile');
+  }
+
+  const result = {
+    ...profileData,
+    role_name: roleName,
+    role_display_name: roleDisplayName,
   };
+  
+  console.log('[getUserProfile] Final result:', result);
+  return result;
 }

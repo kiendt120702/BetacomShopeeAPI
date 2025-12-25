@@ -26,7 +26,6 @@ interface User {
   id: string;
   email: string;
   full_name: string | null;
-  avatar_url: string | null;
   role: string;
   created_at: string;
 }
@@ -96,8 +95,6 @@ export function UserManagementPanel() {
           id, 
           email, 
           full_name, 
-          avatar_url, 
-          role,
           created_at,
           roles (name)
         `)
@@ -498,67 +495,73 @@ export function UserManagementPanel() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {users.map((user) => (
-              <div key={user.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                    {user.avatar_url ? (
-                      <img src={user.avatar_url} alt="" className="w-10 h-10 rounded-full" />
-                    ) : (
-                      <span className="text-sm font-medium text-orange-600">
-                        {(user.full_name || user.email)?.charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900">{user.full_name || 'Chưa cập nhật'}</p>
-                    <p className="text-sm text-gray-500">{user.email}</p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Badge className={getRoleBadgeColor(user.role)}>
-                    {getRoleLabel(user.role)}
-                  </Badge>
-                  <span className="text-sm text-gray-400">
-                    {new Date(user.created_at).toLocaleDateString('vi-VN')}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openShopDialog(user)}
-                    title="Phân quyền Shop"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                    </svg>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openEditDialog(user)}
-                    title="Chỉnh sửa"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </Button>
-                  {user.id !== currentUser?.id && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openDeleteDialog(user)}
-                      title="Xóa user"
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b bg-gray-50">
+                  <th className="text-left p-3 text-sm font-medium text-gray-600 w-12">STT</th>
+                  <th className="text-left p-3 text-sm font-medium text-gray-600">Họ tên</th>
+                  <th className="text-left p-3 text-sm font-medium text-gray-600">Email</th>
+                  <th className="text-left p-3 text-sm font-medium text-gray-600">Vai trò</th>
+                  <th className="text-left p-3 text-sm font-medium text-gray-600">Ngày tạo</th>
+                  <th className="text-center p-3 text-sm font-medium text-gray-600">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user, index) => (
+                  <tr key={user.id} className="border-b hover:bg-gray-50">
+                    <td className="p-3 text-sm text-gray-600">{index + 1}</td>
+                    <td className="p-3 text-sm font-medium text-gray-900">{user.full_name || 'Chưa cập nhật'}</td>
+                    <td className="p-3 text-sm text-gray-600">{user.email}</td>
+                    <td className="p-3">
+                      <Badge className={getRoleBadgeColor(user.role)}>
+                        {getRoleLabel(user.role)}
+                      </Badge>
+                    </td>
+                    <td className="p-3 text-sm text-gray-500">
+                      {new Date(user.created_at).toLocaleDateString('vi-VN')}
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-center space-x-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openShopDialog(user)}
+                          title="Phân quyền Shop"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                          </svg>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openEditDialog(user)}
+                          title="Chỉnh sửa"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </Button>
+                        {user.id !== currentUser?.id && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openDeleteDialog(user)}
+                            title="Xóa user"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             {users.length === 0 && !loading && (
               <p className="text-center text-gray-500 py-8">Không có user nào</p>
             )}

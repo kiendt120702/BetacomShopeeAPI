@@ -16,7 +16,6 @@ export interface AccessToken {
   shop_id_list?: number[];
   supplier_id_list?: number[];
   expired_at?: number;
-  partner_account_id?: string;
 }
 
 export interface RefreshedAccessToken extends Omit<AccessToken, 'merchant_id_list' | 'shop_id_list' | 'supplier_id_list'> {

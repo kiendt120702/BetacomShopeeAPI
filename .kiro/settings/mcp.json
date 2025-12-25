@@ -11,7 +11,10 @@
         "list_tables",
         "apply_migration",
         "get_logs",
-        "execute_sql"
+        "execute_sql",
+        "get_advisors",
+        "get_edge_function",
+        "deploy_edge_function"
       ]
     }
   }

@@ -8,7 +8,7 @@ import { SHOPEE_CONFIG } from '@/lib/shopee';
 import { useAuth } from '@/hooks/useAuth';
 
 const CALLBACK_URL =
-  import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'http://localhost:5173/auth/callback';
+  import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'https://ops.betacom.agency/auth/callback';
 
 export default function AuthPanel() {
   const {
