@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, getShopUuidFromShopId } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
 export type SyncType = 'campaigns' | 'flash_sales' | 'all';
@@ -36,10 +36,17 @@ export function useSyncData(options: UseSyncDataOptions) {
   const fetchSyncStatus = useCallback(async () => {
     if (!shopId || !userId) return null;
 
+    // Get the UUID for this shop
+    const shopUuid = await getShopUuidFromShopId(shopId);
+    if (!shopUuid) {
+      console.error('Could not find shop UUID for shop_id:', shopId);
+      return null;
+    }
+
     const { data, error } = await supabase
-      .from('sync_status')
+      .from('apishopee_sync_status')
       .select('*')
-      .eq('shop_id', shopId)
+      .eq('shop_id', shopUuid)
       .eq('user_id', userId)
       .single();
 
@@ -168,26 +175,38 @@ export function useSyncData(options: UseSyncDataOptions) {
   useEffect(() => {
     if (!shopId || !userId) return;
 
-    const channel = supabase
-      .channel(`sync_status_${shopId}_${userId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'sync_status',
-          filter: `shop_id=eq.${shopId}`,
-        },
-        (payload) => {
-          if (payload.new) {
-            setSyncStatus(payload.new as SyncStatus);
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const setupSubscription = async () => {
+      // Get the UUID for this shop
+      const shopUuid = await getShopUuidFromShopId(shopId);
+      if (!shopUuid) return;
+
+      channel = supabase
+        .channel(`sync_status_${shopId}_${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'apishopee_sync_status',
+            filter: `shop_id=eq.${shopUuid}`,
+          },
+          (payload) => {
+            if (payload.new) {
+              setSyncStatus(payload.new as SyncStatus);
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+    };
+
+    setupSubscription();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [shopId, userId]);
 

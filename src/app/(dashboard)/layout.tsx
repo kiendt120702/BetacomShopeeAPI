@@ -5,7 +5,7 @@
  * Hỗ trợ Demo Mode cho Shopee API Review
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useShopeeAuth } from "@/hooks/useShopeeAuth";
@@ -448,6 +448,14 @@ export default function DashboardLayout({
         router.push(path);
     };
 
+    // Not authenticated - redirect to login
+    // This useEffect MUST be before any early returns to maintain hooks order
+    useEffect(() => {
+        if (!isUserLoading && !isShopeeLoading && !isUserAuthenticated) {
+            router.replace("/auth");
+        }
+    }, [isUserLoading, isShopeeLoading, isUserAuthenticated, router]);
+
     // Loading state
     if (isUserLoading || isShopeeLoading) {
         return (
@@ -460,10 +468,15 @@ export default function DashboardLayout({
         );
     }
 
-    // Not authenticated - redirect to login
     if (!isUserAuthenticated) {
-        router.replace("/auth");
-        return null;
+        return (
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                    <p className="text-slate-500">Đang chuyển hướng...</p>
+                </div>
+            </div>
+        );
     }
 
     return (

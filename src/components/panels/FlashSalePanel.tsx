@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, getShopUuidFromShopId } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
@@ -160,11 +160,19 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
 
     setLoading(true);
     try {
-      // Load theo shop_id, không filter user_id để tất cả user có quyền truy cập shop đều thấy
+      // Get the UUID for this shop from the numeric shop_id
+      const shopUuid = await getShopUuidFromShopId(token.shop_id);
+      if (!shopUuid) {
+        console.error('Could not find shop UUID for shop_id:', token.shop_id);
+        setLoading(false);
+        return;
+      }
+
+      // Load theo shop UUID, không filter user_id để tất cả user có quyền truy cập shop đều thấy
       const { data, error } = await supabase
         .from('apishopee_flash_sale_data')
         .select('*')
-        .eq('shop_id', token.shop_id)
+        .eq('shop_id', shopUuid)
         .order('type', { ascending: true });
 
       if (error) throw error;
@@ -320,16 +328,19 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
     try {
       const now = Math.floor(Date.now() / 1000) + 60;
 
+      // Get the UUID for this shop
+      const shopUuid = await getShopUuidFromShopId(token.shop_id);
+
       // Fetch timeslots và scheduled flash sales song song
       const [timeSlotsRes, scheduledRes] = await Promise.all([
         supabase.functions.invoke('apishopee-flash-sale', {
           body: { action: 'get-time-slots', shop_id: token.shop_id, start_time: now, end_time: now + 30 * 24 * 60 * 60 },
         }),
-        supabase
-          .from('scheduled_flash_sales')
+        shopUuid ? supabase
+          .from('apishopee_scheduled_flash_sales')
           .select('target_timeslot_id')
-          .eq('shop_id', token.shop_id)
-          .eq('status', 'pending')
+          .eq('shop_id', shopUuid)
+          .eq('status', 'pending') : Promise.resolve({ data: null, error: null })
       ]);
 
       if (timeSlotsRes.error) throw timeSlotsRes.error;

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, getShopUuidFromShopId } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
@@ -103,11 +103,19 @@ export default function ScheduledPanel() {
 
     if (showLoading) setLoading(true);
     try {
+      // Get the UUID for this shop from the numeric shop_id
+      const shopUuid = await getShopUuidFromShopId(token.shop_id);
+      if (!shopUuid) {
+        console.error('Could not find shop UUID for shop_id:', token.shop_id);
+        if (showLoading) setLoading(false);
+        return;
+      }
+
       // Load trực tiếp từ database thay vì gọi edge function
       const { data, error } = await supabase
-        .from('scheduled_flash_sales')
+        .from('apishopee_scheduled_flash_sales')
         .select('*')
-        .eq('shop_id', token.shop_id)
+        .eq('shop_id', shopUuid)
         .order('scheduled_at', { ascending: true });
 
       if (error) throw error;

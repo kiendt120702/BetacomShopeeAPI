@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
+import { clearToken } from '@/lib/shopee';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
@@ -166,14 +167,7 @@ export function ShopManagementPanel() {
 
     setDeleting(true);
     try {
-      // Use shop.id (UUID) for apishopee_shop_members.shop_id
-      const { error: membersError } = await supabase
-        .from('apishopee_shop_members')
-        .delete()
-        .eq('shop_id', shopToDelete.id);
-
-      if (membersError) throw membersError;
-
+      // IMPORTANT: Delete shop first (while user is still admin), then members
       // Use shop.id (UUID) for apishopee_shops.id
       const { error: shopError } = await supabase
         .from('apishopee_shops')
@@ -182,11 +176,29 @@ export function ShopManagementPanel() {
 
       if (shopError) throw shopError;
 
+      // Shop members will be deleted by cascade or we delete them after
+      // Use shop.id (UUID) for apishopee_shop_members.shop_id
+      const { error: membersError } = await supabase
+        .from('apishopee_shop_members')
+        .delete()
+        .eq('shop_id', shopToDelete.id);
+
+      // Ignore members error since shop is already deleted
+      if (membersError) {
+        console.warn('Failed to delete shop members:', membersError);
+      }
+
+      // Clear localStorage token if deleted shop was the selected one
+      await clearToken();
+
       setShops(prev => prev.filter(s => s.id !== shopToDelete.id));
       setDeleteDialogOpen(false);
       setShopToDelete(null);
 
       toast({ title: 'Thành công', description: 'Đã xóa shop' });
+      
+      // Reload page to refresh all states
+      window.location.reload();
     } catch (err) {
       toast({
         title: 'Lỗi',

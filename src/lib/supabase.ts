@@ -36,3 +36,49 @@ export const supabase: SupabaseClient = createClient(
 export function isSupabaseConfigured(): boolean {
   return isConfigured;
 }
+
+// Cache for shop UUID lookups to avoid repeated queries
+const shopUuidCache = new Map<number, string>();
+
+/**
+ * Get the UUID (id) of a shop from its numeric Shopee shop_id
+ * This is needed because apishopee_shops uses UUID as primary key,
+ * but token.shop_id is the numeric Shopee shop ID
+ */
+export async function getShopUuidFromShopId(shopId: number): Promise<string | null> {
+  // Check cache first
+  if (shopUuidCache.has(shopId)) {
+    return shopUuidCache.get(shopId) || null;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('apishopee_shops')
+      .select('id')
+      .eq('shop_id', shopId)
+      .single();
+
+    if (error || !data) {
+      console.error('[Supabase] Failed to get shop UUID for shop_id:', shopId, error);
+      return null;
+    }
+
+    // Cache the result
+    shopUuidCache.set(shopId, data.id);
+    return data.id;
+  } catch (err) {
+    console.error('[Supabase] Error getting shop UUID:', err);
+    return null;
+  }
+}
+
+/**
+ * Clear the shop UUID cache (useful when shop data changes)
+ */
+export function clearShopUuidCache(shopId?: number): void {
+  if (shopId) {
+    shopUuidCache.delete(shopId);
+  } else {
+    shopUuidCache.clear();
+  }
+}

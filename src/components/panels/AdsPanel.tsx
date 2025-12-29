@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, getShopUuidFromShopId } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
@@ -59,11 +59,19 @@ export default function AdsPanel() {
     if (!token?.shop_id) return;
     setLoading(true);
     try {
+      // Get the UUID for this shop from the numeric shop_id
+      const shopUuid = await getShopUuidFromShopId(token.shop_id);
+      if (!shopUuid) {
+        console.error('Could not find shop UUID for shop_id:', token.shop_id);
+        setLoading(false);
+        return;
+      }
+
       // Load trực tiếp từ database
       const { data: cached } = await supabase
-        .from('ads_campaign_data')
+        .from('apishopee_ads_campaign_data')
         .select('*')
-        .eq('shop_id', token.shop_id)
+        .eq('shop_id', shopUuid)
         .order('status', { ascending: true });
       
       if (cached && cached.length > 0) {
@@ -95,6 +103,14 @@ export default function AdsPanel() {
     if (!token?.shop_id) return;
     setLoading(true);
     try {
+      // Get the UUID for this shop
+      const shopUuid = await getShopUuidFromShopId(token.shop_id);
+      if (!shopUuid) {
+        toast({ title: 'Lỗi', description: 'Không tìm thấy shop', variant: 'destructive' });
+        setLoading(false);
+        return;
+      }
+
       const res = await getCampaignIdList({ shop_id: token.shop_id, ad_type: 'all' as AdType });
       if (res.error && res.error !== '-') { 
         toast({ title: 'Lỗi', description: res.message, variant: 'destructive' }); 
@@ -117,9 +133,9 @@ export default function AdsPanel() {
       }
       setCampaigns(withInfo);
       
-      // Lưu vào database
+      // Lưu vào database với shop UUID
       const cacheData = withInfo.map(c => ({
-        shop_id: token.shop_id,
+        shop_id: shopUuid,
         campaign_id: c.campaign_id,
         ad_type: c.ad_type,
         name: c.name || null,
@@ -132,7 +148,7 @@ export default function AdsPanel() {
         item_count: c.common_info?.item_id_list?.length || 0,
         synced_at: new Date().toISOString(),
       }));
-      await supabase.from('ads_campaign_data').upsert(cacheData, { onConflict: 'shop_id,campaign_id' });
+      await supabase.from('apishopee_ads_campaign_data').upsert(cacheData, { onConflict: 'shop_id,campaign_id' });
       
       toast({ title: 'Thành công', description: 'Đã tải ' + list.length + ' chiến dịch' });
     } catch (e) { 
@@ -142,8 +158,20 @@ export default function AdsPanel() {
     }
   };
 
-  const loadSchedules = async () => { if (!token?.shop_id) return; const { data } = await supabase.from('scheduled_ads_budget').select('*').eq('shop_id', token.shop_id).eq('is_active', true).order('created_at', { ascending: false }); setSchedules(data || []); };
-  const loadLogs = async () => { if (!token?.shop_id) return; const { data } = await supabase.from('ads_budget_logs').select('*').eq('shop_id', token.shop_id).order('executed_at', { ascending: false }).limit(50); setLogs(data || []); };
+  const loadSchedules = async () => { 
+    if (!token?.shop_id) return; 
+    const shopUuid = await getShopUuidFromShopId(token.shop_id);
+    if (!shopUuid) return;
+    const { data } = await supabase.from('apishopee_scheduled_ads_budget').select('*').eq('shop_id', shopUuid).eq('is_active', true).order('created_at', { ascending: false }); 
+    setSchedules(data || []); 
+  };
+  const loadLogs = async () => { 
+    if (!token?.shop_id) return; 
+    const shopUuid = await getShopUuidFromShopId(token.shop_id);
+    if (!shopUuid) return;
+    const { data } = await supabase.from('apishopee_ads_budget_logs').select('*').eq('shop_id', shopUuid).order('executed_at', { ascending: false }).limit(50); 
+    setLogs(data || []); 
+  };
   const hasScheduleAtHour = (cid: number, h: number) => schedules.some(s => s.campaign_id === cid && h >= s.hour_start && h < s.hour_end);
   const clearAllSelections = () => { setSelectedCampaigns([]); setBulkHours([]); };
   const toggleCampaignSelection = (cid: number) => { setSelectedCampaigns(p => p.includes(cid) ? p.filter(x => x !== cid) : [...p, cid]); };
@@ -151,7 +179,7 @@ export default function AdsPanel() {
   const selectAllCampaigns = () => { setSelectedCampaigns(filteredCampaigns.map(c => c.campaign_id)); };
   const deselectAllCampaigns = () => { setSelectedCampaigns([]); };
   const openBulkDialog = () => { if (selectedCampaigns.length === 0) { toast({ title: 'Chọn ít nhất 1 chiến dịch' }); return; } if (bulkHours.length === 0) { toast({ title: 'Chọn ít nhất 1 khung giờ' }); return; } setBudgetValue(''); setShowBulkDialog(true); };
-  const deleteSchedule = async (id: string) => { if (!confirm('Xóa?')) return; await supabase.from('scheduled_ads_budget').delete().eq('id', id); toast({ title: 'Đã xóa' }); loadSchedules(); };
+  const deleteSchedule = async (id: string) => { if (!confirm('Xóa?')) return; await supabase.from('apishopee_scheduled_ads_budget').delete().eq('id', id); toast({ title: 'Đã xóa' }); loadSchedules(); };
   
   const saveBulkSchedule = async () => {
     if (!token?.shop_id || selectedCampaigns.length === 0 || bulkHours.length === 0) return;
@@ -160,10 +188,17 @@ export default function AdsPanel() {
     if (scheduleType === 'specific' && selectedDates.length === 0) { toast({ title: 'Vui lòng chọn ít nhất 1 ngày' }); return; }
     setSaving(true);
     try {
+      // Get the UUID for this shop
+      const shopUuid = await getShopUuidFromShopId(token.shop_id);
+      if (!shopUuid) {
+        toast({ title: 'Lỗi', description: 'Không tìm thấy shop', variant: 'destructive' });
+        setSaving(false);
+        return;
+      }
       const records = selectedCampaigns.map(cid => {
         const campaign = campaigns.find(c => c.campaign_id === cid);
         return {
-          shop_id: token.shop_id,
+          shop_id: shopUuid,
           campaign_id: cid,
           campaign_name: campaign?.name || '',
           ad_type: campaign?.ad_type || 'auto',
@@ -175,7 +210,7 @@ export default function AdsPanel() {
           is_active: true
         };
       });
-      const { error } = await supabase.from('scheduled_ads_budget').insert(records);
+      const { error } = await supabase.from('apishopee_scheduled_ads_budget').insert(records);
       if (error) throw error;
       toast({ title: 'Thành công', description: `Đã tạo lịch cho ${selectedCampaigns.length} chiến dịch` });
       setShowBulkDialog(false);

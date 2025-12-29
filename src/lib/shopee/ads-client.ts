@@ -3,7 +3,7 @@
  * Gọi backend API để xử lý Shopee Ads
  */
 
-import { supabase } from '../supabase';
+import { supabase, getShopUuidFromShopId } from '../supabase';
 import type {
   AdType,
   GetCampaignIdListResponse,
@@ -294,10 +294,17 @@ export interface CachedCampaign {
  * Lấy campaigns từ cache
  */
 export async function getCampaignsFromCache(shopId: number): Promise<CachedCampaign[]> {
+  // Get the UUID for this shop
+  const shopUuid = await getShopUuidFromShopId(shopId);
+  if (!shopUuid) {
+    console.error('[getCampaignsFromCache] Could not find shop UUID for shop_id:', shopId);
+    return [];
+  }
+
   const { data, error } = await supabase
-    .from('ads_campaign_data')
+    .from('apishopee_ads_campaign_data')
     .select('*')
-    .eq('shop_id', shopId)
+    .eq('shop_id', shopUuid)
     .order('status', { ascending: true });
 
   if (error) {
@@ -322,12 +329,19 @@ export async function saveCampaignsToCache(
 ): Promise<void> {
   if (!campaigns.length) return;
 
+  // Get the UUID for this shop
+  const shopUuid = await getShopUuidFromShopId(shopId);
+  if (!shopUuid) {
+    console.error('[saveCampaignsToCache] Could not find shop UUID for shop_id:', shopId);
+    return;
+  }
+
   // Get current user
   const { data: { user } } = await supabase.auth.getUser();
   const userId = user?.id;
 
   const cacheData = campaigns.map(c => ({
-    shop_id: shopId,
+    shop_id: shopUuid,
     user_id: userId,
     campaign_id: c.campaign_id,
     ad_type: c.ad_type,
@@ -345,7 +359,7 @@ export async function saveCampaignsToCache(
   }));
 
   const { error } = await supabase
-    .from('ads_campaign_data')
+    .from('apishopee_ads_campaign_data')
     .upsert(cacheData, { onConflict: 'shop_id,campaign_id' });
 
   if (error) {
