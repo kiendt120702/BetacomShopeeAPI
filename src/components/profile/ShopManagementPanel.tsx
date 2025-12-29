@@ -26,7 +26,9 @@ interface Shop {
   shop_name: string | null;
   shop_logo: string | null;
   region: string | null;
-  partner_account_id: string | null;
+  partner_id: number | null;
+  partner_key: string | null;
+  partner_name: string | null;
   created_at: string;
   token_updated_at: string | null;
   token_expired_at: number | null;
@@ -82,7 +84,7 @@ export function ShopManagementPanel() {
 
       const { data: shopsData, error: shopsError } = await supabase
         .from('apishopee_shops')
-        .select('id, shop_id, shop_name, shop_logo, region, partner_account_id, created_at, token_updated_at, token_expired_at')
+        .select('id, shop_id, shop_name, shop_logo, region, partner_id, partner_key, partner_name, created_at, token_updated_at, token_expired_at')
         .in('id', shopIds);
 
       if (shopsError) throw shopsError;
@@ -139,20 +141,12 @@ export function ShopManagementPanel() {
     setReconnectingShop(shop.shop_id);
     try {
       let partnerInfo = null;
-      if (shop.partner_account_id) {
-        const { data: partnerData } = await supabase
-          .from('apishopee_partner_accounts')
-          .select('partner_id, partner_key, partner_name')
-          .eq('id', shop.partner_account_id)
-          .single();
-
-        if (partnerData) {
-          partnerInfo = {
-            partner_id: partnerData.partner_id,
-            partner_key: partnerData.partner_key,
-            partner_name: partnerData.partner_name,
-          };
-        }
+      if (shop.partner_id && shop.partner_key) {
+        partnerInfo = {
+          partner_id: shop.partner_id,
+          partner_key: shop.partner_key,
+          partner_name: shop.partner_name || undefined,
+        };
       }
 
       await login(undefined, undefined, partnerInfo || undefined);

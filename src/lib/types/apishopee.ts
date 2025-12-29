@@ -32,7 +32,9 @@ export interface ApiShopeeShop {
     shop_name: string | null;
     region: string;
     shop_logo: string | null;
-    partner_account_id: string | null;
+    partner_id: number | null;
+    partner_key: string | null;
+    partner_name: string | null;
     access_token: string | null;
     refresh_token: string | null;
     token_expired_at: number | null;
