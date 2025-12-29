@@ -43,7 +43,7 @@ async function getPartnerCredentials(
   shopId: number
 ): Promise<PartnerCredentials> {
   const { data, error } = await supabase
-    .from('shops')
+    .from('apishopee_shops')
     .select('partner_id, partner_key')
     .eq('shop_id', shopId)
     .single();
@@ -121,7 +121,7 @@ async function saveToken(
   shopId: number,
   token: Record<string, unknown>
 ) {
-  const { error } = await supabase.from('shops').upsert(
+  const { error } = await supabase.from('apishopee_shops').upsert(
     {
       shop_id: shopId,
       access_token: token.access_token,
@@ -145,7 +145,7 @@ async function getTokenWithAutoRefresh(
 ) {
   // 1. Tìm token từ bảng shops (nơi frontend lưu token)
   const { data: shopData, error: shopError } = await supabase
-    .from('shops')
+    .from('apishopee_shops')
     .select('shop_id, access_token, refresh_token, expired_at, merchant_id')
     .eq('shop_id', shopId)
     .single();
@@ -215,7 +215,7 @@ async function callShopeeAPIWithRetry(
       await saveToken(supabase, shopId, newToken);
       
       // Cập nhật bảng shops
-      await supabase.from('shops').upsert({
+      await supabase.from('apishopee_shops').upsert({
         shop_id: shopId,
         access_token: newToken.access_token,
         refresh_token: newToken.refresh_token,

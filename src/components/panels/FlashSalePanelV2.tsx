@@ -80,7 +80,7 @@ export default function FlashSalePanelV2() {
 
   // Realtime data từ DB
   const { data: flashSales, loading } = useRealtimeData<FlashSale>(
-    'flash_sale_data',
+    'apishopee_flash_sale_data',
     shopId,
     userId,
     { orderBy: 'start_time', orderAsc: false }
@@ -89,11 +89,11 @@ export default function FlashSalePanelV2() {
   // Filter and sort
   const filteredSales = useMemo(() => {
     let result = [...flashSales];
-    
+
     if (filterType !== '0') {
       result = result.filter(s => s.type === Number(filterType));
     }
-    
+
     result.sort((a, b) => (TYPE_PRIORITY[a.type] || 99) - (TYPE_PRIORITY[b.type] || 99));
     return result;
   }, [flashSales, filterType]);
@@ -125,10 +125,10 @@ export default function FlashSalePanelV2() {
     if (!confirm(`Bạn có chắc muốn xóa Flash Sale này?\nID: ${selectedSale.flash_sale_id}`)) return;
 
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-flash-sale', {
+      const { data, error } = await supabase.functions.invoke('apishopee-flash-sale', {
         body: { action: 'delete-flash-sale', shop_id: shopId, flash_sale_id: selectedSale.flash_sale_id },
       });
-      
+
       if (error) throw error;
       if (data?.error) {
         toast({ title: 'Lỗi', description: data.message || data.error, variant: 'destructive' });
@@ -136,8 +136,8 @@ export default function FlashSalePanelV2() {
       }
 
       // Delete from local DB
-      await supabase.from('flash_sale_data').delete().eq('id', selectedSale.id);
-      
+      await supabase.from('apishopee_flash_sale_data').delete().eq('id', selectedSale.id);
+
       toast({ title: 'Thành công', description: 'Đã xóa Flash Sale' });
       setSelectedSale(null);
     } catch (err) {
@@ -170,7 +170,7 @@ export default function FlashSalePanelV2() {
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
             <Select value={filterType} onValueChange={(value) => {
               setFilterType(value);
@@ -194,10 +194,10 @@ export default function FlashSalePanelV2() {
                 <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>→</Button>
               </div>
             )}
-            
-            <Button 
-              className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600" 
-              onClick={() => triggerSync('flash_sales')} 
+
+            <Button
+              className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+              onClick={() => triggerSync('flash_sales')}
               disabled={isSyncing || !isAuthenticated}
             >
               {isSyncing ? 'Đang sync...' : 'Sync'}
@@ -251,9 +251,9 @@ export default function FlashSalePanelV2() {
                   {paginatedSales.map((sale) => {
                     const isSelected = selectedSale?.flash_sale_id === sale.flash_sale_id;
                     const typeInfo = TYPE_MAP[sale.type];
-                    
+
                     return (
-                      <TableRow 
+                      <TableRow
                         key={sale.id}
                         onClick={() => handleSelectSale(sale)}
                         className={`cursor-pointer transition-colors ${isSelected ? 'bg-orange-50' : 'hover:bg-slate-50'}`}

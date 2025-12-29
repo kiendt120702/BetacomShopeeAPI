@@ -21,7 +21,7 @@ export async function getFullShopInfo(
   shopId: number,
   forceRefresh = false
 ): Promise<FullShopInfoResponse> {
-  const { data, error } = await supabase.functions.invoke('shopee-shop', {
+  const { data, error } = await supabase.functions.invoke('apishopee-shop', {
     body: {
       action: 'get-full-info',
       shop_id: shopId,
@@ -41,7 +41,7 @@ export async function getFullShopInfo(
  * GET /api/v2/shop/get_shop_info
  */
 export async function getShopInfo(shopId: number): Promise<GetShopInfoResponse> {
-  const { data, error } = await supabase.functions.invoke('shopee-shop', {
+  const { data, error } = await supabase.functions.invoke('apishopee-shop', {
     body: {
       action: 'get-shop-info',
       shop_id: shopId,
@@ -60,7 +60,7 @@ export async function getShopInfo(shopId: number): Promise<GetShopInfoResponse> 
  * GET /api/v2/shop/get_profile
  */
 export async function getShopProfile(shopId: number): Promise<GetShopProfileResponse> {
-  const { data, error } = await supabase.functions.invoke('shopee-shop', {
+  const { data, error } = await supabase.functions.invoke('apishopee-shop', {
     body: {
       action: 'get-profile',
       shop_id: shopId,

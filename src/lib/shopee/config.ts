@@ -25,10 +25,10 @@ export enum ShopeeRegion {
 
 // Environment variables - thay đổi theo môi trường của bạn
 export const SHOPEE_CONFIG = {
-  partner_id: Number(import.meta.env.VITE_SHOPEE_PARTNER_ID) || 0,
-  partner_key: import.meta.env.VITE_SHOPEE_PARTNER_KEY || '',
+  partner_id: Number(process.env.NEXT_PUBLIC_SHOPEE_PARTNER_ID) || 0,
+  partner_key: process.env.NEXT_PUBLIC_SHOPEE_PARTNER_KEY || '',
   region: ShopeeRegion.VN, // Vietnam region
-  shop_id: Number(import.meta.env.VITE_SHOPEE_SHOP_ID) || undefined,
+  shop_id: Number(process.env.NEXT_PUBLIC_SHOPEE_SHOP_ID) || undefined,
 };
 
 // Base URLs

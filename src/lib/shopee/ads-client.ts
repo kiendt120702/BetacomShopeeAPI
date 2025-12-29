@@ -32,7 +32,7 @@ export interface GetCampaignSettingInfoParams {
 export async function getCampaignIdList(
   params: GetCampaignIdListParams
 ): Promise<GetCampaignIdListResponse> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads', {
     body: {
       action: 'get-campaign-id-list',
       shop_id: params.shop_id,
@@ -66,7 +66,7 @@ export async function getCampaignSettingInfo(
     ? params.info_type_list.join(',')
     : params.info_type_list;
 
-  const { data, error } = await supabase.functions.invoke('shopee-ads', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads', {
     body: {
       action: 'get-campaign-setting-info',
       shop_id: params.shop_id,
@@ -113,7 +113,7 @@ export async function getAllCampaignsWithInfo(
 
   for (let i = 0; i < campaignIds.length; i += batchSize) {
     const batch = campaignIds.slice(i, i + batchSize);
-    
+
     const settingResponse = await getCampaignSettingInfo({
       shop_id: shopId,
       campaign_id_list: batch,
@@ -172,8 +172,8 @@ export async function editManualProductAds(
   params: EditManualProductAdsParams & { shop_id: number }
 ): Promise<EditAdsResponse> {
   const { shop_id, ...adsParams } = params;
-  
-  const { data, error } = await supabase.functions.invoke('shopee-ads', {
+
+  const { data, error } = await supabase.functions.invoke('apishopee-ads', {
     body: {
       action: 'edit-manual-product-ads',
       shop_id,
@@ -195,8 +195,8 @@ export async function editAutoProductAds(
   params: EditAutoProductAdsParams & { shop_id: number }
 ): Promise<EditAdsResponse> {
   const { shop_id, ...adsParams } = params;
-  
-  const { data, error } = await supabase.functions.invoke('shopee-ads', {
+
+  const { data, error } = await supabase.functions.invoke('apishopee-ads', {
     body: {
       action: 'edit-auto-product-ads',
       shop_id,

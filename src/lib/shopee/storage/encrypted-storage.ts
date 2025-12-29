@@ -101,10 +101,10 @@ export class EncryptedLocalStorageTokenStorage implements TokenStorage {
     this.key = shopId
       ? `${STORAGE_KEY_PREFIX}_${shopId}`
       : `${STORAGE_KEY_PREFIX}_default`;
-    
+
     // Use provided key or generate from environment/default
-    this.encryptionKey = encryptionKey 
-      || import.meta.env.VITE_TOKEN_ENCRYPTION_KEY 
+    this.encryptionKey = encryptionKey
+      || process.env.NEXT_PUBLIC_TOKEN_ENCRYPTION_KEY
       || this.generateDefaultKey();
   }
 
@@ -120,7 +120,7 @@ export class EncryptedLocalStorageTokenStorage implements TokenStorage {
       screen.height,
       new Date().getTimezoneOffset(),
     ].join('|');
-    
+
     // Simple hash
     let hash = 0;
     for (let i = 0; i < fingerprint.length; i++) {
@@ -128,7 +128,7 @@ export class EncryptedLocalStorageTokenStorage implements TokenStorage {
       hash = ((hash << 5) - hash) + char;
       hash = hash & hash;
     }
-    
+
     return `shopee_default_${Math.abs(hash).toString(36)}`;
   }
 
@@ -136,7 +136,7 @@ export class EncryptedLocalStorageTokenStorage implements TokenStorage {
     try {
       const data = JSON.stringify(token);
       const encrypted = await CryptoHelper.encrypt(data, this.encryptionKey);
-      
+
       localStorage.setItem(this.key, encrypted);
 
       // Also store in default key if first token

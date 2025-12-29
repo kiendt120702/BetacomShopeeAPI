@@ -36,7 +36,7 @@ async function getPartnerCredentials(
 ): Promise<PartnerCredentials> {
   // Tìm partner từ shop
   const { data, error } = await supabase
-    .from('shops')
+    .from('apishopee_shops')
     .select('partner_id, partner_key')
     .eq('shop_id', shopId)
     .single();
@@ -88,16 +88,16 @@ async function createSignature(
 
 async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: string) {
   console.log(`[SYNC] Looking for token - shop_id: ${shopId}, user_id: ${userId}`);
-  
+
   // 1. Tìm token từ bảng shops (nơi frontend lưu token)
   const { data: shopData, error: shopError } = await supabase
-    .from('shops')
+    .from('apishopee_shops')
     .select('shop_id, access_token, refresh_token, expired_at, merchant_id')
     .eq('shop_id', shopId)
     .single();
 
-  console.log(`[SYNC] shops table query result:`, { 
-    found: !!shopData, 
+  console.log(`[SYNC] shops table query result:`, {
+    found: !!shopData,
     error: shopError?.message,
     hasAccessToken: !!shopData?.access_token,
     accessTokenLength: shopData?.access_token?.length,
@@ -122,13 +122,13 @@ async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: s
   if (userId) {
     query = query.eq('user_id', userId);
   }
-  
+
   const { data: userShopData, error: userShopError } = await query.single();
 
-  console.log(`[SYNC] user_shops query result:`, { 
-    found: !!userShopData, 
+  console.log(`[SYNC] user_shops query result:`, {
+    found: !!userShopData,
     error: userShopError?.message,
-    hasAccessToken: !!userShopData?.access_token 
+    hasAccessToken: !!userShopData?.access_token
   });
 
   if (!userShopError && userShopData?.access_token) {
@@ -142,7 +142,7 @@ async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: s
   // 3. Fallback: Test tokens từ environment
   const testAccessToken = Deno.env.get('TEST_SHOPEE_ACCESS_TOKEN');
   const testRefreshToken = Deno.env.get('TEST_SHOPEE_REFRESH_TOKEN');
-  
+
   if (testAccessToken && testRefreshToken) {
     console.log(`[SYNC] Using test tokens for shop ${shopId}`);
     return {
@@ -151,7 +151,7 @@ async function getTokenWithAutoRefresh(supabase: any, shopId: number, userId?: s
       shop_id: shopId,
     };
   }
-  
+
   throw new Error(`Token not found for shop ${shopId}. Please authenticate first. Check: 1) User logged into Supabase 2) Shopee token saved to database (shops table) 3) RLS policies allow access`);
 }
 
@@ -180,11 +180,11 @@ async function refreshAccessToken(
   const timestamp = Math.floor(Date.now() / 1000);
   const path = '/api/v2/auth/access_token/get';
   const sign = await createSignature(credentials.partnerKey, credentials.partnerId, path, timestamp);
-  
+
   const url = `${SHOPEE_BASE_URL}${path}?partner_id=${credentials.partnerId}&timestamp=${timestamp}&sign=${sign}`;
-  
+
   console.log('[SYNC] Refreshing access token for shop:', shopId);
-  
+
   const response = await fetchWithProxy(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -194,14 +194,14 @@ async function refreshAccessToken(
       shop_id: shopId,
     }),
   });
-  
+
   const result = await response.json();
-  
+
   if (result.error) {
     console.error('[SYNC] Token refresh failed:', result);
     return null;
   }
-  
+
   console.log('[SYNC] Token refreshed successfully');
   return {
     access_token: result.access_token,
@@ -219,9 +219,9 @@ async function saveRefreshedToken(
   newToken: { access_token: string; refresh_token: string; expire_in: number }
 ) {
   const expiredAt = Date.now() + newToken.expire_in * 1000;
-  
+
   const { error } = await supabase
-    .from('shops')
+    .from('apishopee_shops')
     .update({
       access_token: newToken.access_token,
       refresh_token: newToken.refresh_token,
@@ -230,7 +230,7 @@ async function saveRefreshedToken(
       token_updated_at: new Date().toISOString(),
     })
     .eq('shop_id', shopId);
-  
+
   if (error) {
     console.error('[SYNC] Failed to save refreshed token:', error);
   } else {
@@ -292,27 +292,27 @@ async function callShopeeAPIWithParams(
 
   // First attempt
   let result = await makeRequest(token.access_token);
-  
+
   // Check if token expired and retry with refresh
-  if (result.error === 'error_auth' || result.error === 'invalid_acceess_token' || 
-      (result.message && result.message.includes('Invalid access_token'))) {
+  if (result.error === 'error_auth' || result.error === 'invalid_acceess_token' ||
+    (result.message && result.message.includes('Invalid access_token'))) {
     console.log('[SYNC] Token expired, attempting refresh...');
-    
+
     const newToken = await refreshAccessToken(credentials, token.refresh_token, shopId);
-    
+
     if (newToken) {
       // Save new token
       await saveRefreshedToken(supabase, shopId, newToken);
-      
+
       // Update token object for subsequent calls
       token.access_token = newToken.access_token;
       token.refresh_token = newToken.refresh_token;
-      
+
       // Retry with new token
       result = await makeRequest(newToken.access_token);
     }
   }
-  
+
   return result;
 }
 
@@ -338,7 +338,7 @@ async function updateSyncProgress(supabase: any, shopId: number, userId: string,
 
 async function syncFlashSaleData(supabase: any, shopId: number, userId: string) {
   console.log(`[SYNC] Starting flash sale sync for shop ${shopId}, user ${userId}`);
-  
+
   try {
     // Update progress: Bắt đầu
     await updateSyncProgress(supabase, shopId, userId, {
@@ -372,7 +372,7 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
       token,
       { type: '0', offset: '0', limit: '100' }
     );
-    
+
     console.log('[SYNC] Shopee API response:', JSON.stringify(apiResponse).substring(0, 500));
 
     // Shopee trả về error = "" hoặc "-" khi thành công
@@ -395,7 +395,7 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
 
     // Clear old data for this shop (không filter user_id để tất cả user có quyền truy cập shop đều thấy dữ liệu mới)
     await supabase
-      .from('flash_sale_data')
+      .from('apishopee_flash_sale_data')
       .delete()
       .eq('shop_id', shopId);
 
@@ -428,7 +428,7 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
       });
 
       const { error: insertError } = await supabase
-        .from('flash_sale_data')
+        .from('apishopee_flash_sale_data')
         .insert(dataToInsert);
 
       if (insertError) {
@@ -458,14 +458,14 @@ async function syncFlashSaleData(supabase: any, shopId: number, userId: string) 
 
 async function syncAdsCampaignData(supabase: any, shopId: number, userId: string) {
   console.log(`[SYNC] Starting ads campaign sync for shop ${shopId}, user ${userId}`);
-  
+
   try {
     // Lấy partner credentials từ database
     const credentials = await getPartnerCredentials(supabase, shopId);
 
     // Get token with userId for better lookup
     const token = await getTokenWithAutoRefresh(supabase, shopId, userId);
-    
+
     // Call Shopee API for campaign list with auto-refresh
     const path = '/api/v2/ads/get_campaign_id_list';
     const apiResponse = await callShopeeAPIWithParams(
@@ -569,7 +569,7 @@ async function syncAdsCampaignData(supabase: any, shopId: number, userId: string
 // Helper function to update sync_status table
 async function updateSyncStatus(supabase: any, shopId: number, userId: string, field: string) {
   const now = new Date().toISOString();
-  
+
   // Upsert sync_status
   const { error } = await supabase
     .from('sync_status')
@@ -633,7 +633,7 @@ serve(async (req) => {
 
         try {
           const result = await syncFlashSaleData(supabase, shop_id, user_id);
-          
+
           // Update job status to completed
           if (job_id) {
             await updateSyncJob(supabase, job_id, {
@@ -679,7 +679,7 @@ serve(async (req) => {
 
         try {
           const result = await syncAdsCampaignData(supabase, shop_id, user_id);
-          
+
           // Update job status to completed
           if (job_id) {
             await updateSyncJob(supabase, job_id, {
@@ -750,7 +750,7 @@ serve(async (req) => {
     console.error('Sync worker error:', error);
     // Trả về 200 với error trong body để frontend có thể đọc được message
     // Thay vì 500 sẽ gây ra "non-2xx status code" không rõ ràng
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       error: (error as Error).message,
       success: false,
       details: 'Check Supabase Edge Function logs for more details'

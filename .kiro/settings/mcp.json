@@ -2,21 +2,22 @@
   "mcpServers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=omgvvnqwroypavmpwbup",
+      "url": "https://mcp.supabase.com/mcp?project_ref=tjzeskxkqvjbowikzqpv",
       "headers": {
-        "Authorization": "Bearer sbp_21a9c174d11146f40cde9f07e1bef61e65215c89"
+        "Authorization": "Bearer sbp_15ce9b9186ade4eed28b3fc1c334581c642752f1"
       },
       "disabled": false,
       "autoApprove": [
         "list_tables",
         "apply_migration",
         "get_logs",
-        "execute_sql",
-        "get_advisors",
+        "list_edge_functions",
         "get_edge_function",
         "deploy_edge_function",
-        "list_edge_functions",
-        "list_migrations"
+        "execute_sql",
+        "list_migrations",
+        "get_advisors",
+        "get_project_url"
       ]
     }
   }

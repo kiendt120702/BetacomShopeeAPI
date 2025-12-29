@@ -96,7 +96,7 @@ export interface FlashSalePanelRef {
 const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   const { toast } = useToast();
   const { token, isAuthenticated, user } = useShopeeAuth();
-  
+
   // Data state - từ Supabase DB
   const [flashSales, setFlashSales] = useState<FlashSale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,18 +106,18 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   const [filterType, setFilterType] = useState<string>('0');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
-  
+
   // Detail modal state
   const [selectedSale, setSelectedSale] = useState<FlashSale | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsInfo, setItemsInfo] = useState<ItemInfo[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
-  
+
   // Delete state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  
+
   // Copy state
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const [loadingTimeSlots, setLoadingTimeSlots] = useState(false);
@@ -153,27 +153,27 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   // ============================================
   // LOAD DATA FROM SUPABASE DB (Sync-First)
   // ============================================
-  
+
   // Load flash sales từ DB
   const loadFlashSalesFromDB = async () => {
     if (!token?.shop_id) return;
-    
+
     setLoading(true);
     try {
       // Load theo shop_id, không filter user_id để tất cả user có quyền truy cập shop đều thấy
       const { data, error } = await supabase
-        .from('flash_sale_data')
+        .from('apishopee_flash_sale_data')
         .select('*')
         .eq('shop_id', token.shop_id)
         .order('type', { ascending: true });
 
       if (error) throw error;
-      
+
       // Sort by type priority: Đang chạy > Sắp tới > Kết thúc
-      const sorted = (data || []).sort((a, b) => 
+      const sorted = (data || []).sort((a, b) =>
         (TYPE_PRIORITY[a.type] || 99) - (TYPE_PRIORITY[b.type] || 99)
       );
-      
+
       setFlashSales(sorted);
     } catch (err) {
       console.error('Error loading flash sales from DB:', err);
@@ -185,7 +185,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   // ============================================
   // TRIGGER SYNC (Gọi Edge Function sync từ Shopee)
   // ============================================
-  
+
   const triggerSync = async () => {
     if (!token?.shop_id || !user?.id) {
       toast({ title: 'Lỗi', description: 'Chưa đăng nhập', variant: 'destructive' });
@@ -227,7 +227,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
       .subscribe();
 
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-sync-worker', {
+      const { data, error } = await supabase.functions.invoke('apishopee-sync-worker', {
         body: {
           action: 'sync-flash-sale-data',
           shop_id: token.shop_id,
@@ -265,10 +265,10 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
         total: count,
         synced: count,
       });
-      
+
       // Reload data từ DB
       await loadFlashSalesFromDB();
-      
+
     } catch (err) {
       supabase.removeChannel(progressChannel);
       setSyncProgress({
@@ -285,7 +285,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   // ============================================
   // LOAD DATA ON MOUNT (Không dùng realtime để tránh reload liên tục)
   // ============================================
-  
+
   useEffect(() => {
     if (!token?.shop_id) return;
 
@@ -301,7 +301,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
     if (!token?.shop_id) return;
     setLoadingItems(true);
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-flash-sale', {
+      const { data, error } = await supabase.functions.invoke('apishopee-flash-sale', {
         body: { action: 'get-items', shop_id: token.shop_id, flash_sale_id: flashSaleId, offset: 0, limit: 100 },
       });
       if (error) throw error;
@@ -319,10 +319,10 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
     setLoadingTimeSlots(true);
     try {
       const now = Math.floor(Date.now() / 1000) + 60;
-      
+
       // Fetch timeslots và scheduled flash sales song song
       const [timeSlotsRes, scheduledRes] = await Promise.all([
-        supabase.functions.invoke('shopee-flash-sale', {
+        supabase.functions.invoke('apishopee-flash-sale', {
           body: { action: 'get-time-slots', shop_id: token.shop_id, start_time: now, end_time: now + 30 * 24 * 60 * 60 },
         }),
         supabase
@@ -331,10 +331,10 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
           .eq('shop_id', token.shop_id)
           .eq('status', 'pending')
       ]);
-      
+
       if (timeSlotsRes.error) throw timeSlotsRes.error;
       setTimeSlots(timeSlotsRes.data?.response || []);
-      
+
       // Tạo Set các timeslot đã có lịch hẹn pending
       const scheduledSet = new Set<number>();
       if (scheduledRes.data) {
@@ -363,7 +363,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
 
     setDeleting(true);
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-flash-sale', {
+      const { data, error } = await supabase.functions.invoke('apishopee-flash-sale', {
         body: { action: 'delete-flash-sale', shop_id: token.shop_id, flash_sale_id: selectedSale.flash_sale_id },
       });
       if (error) throw error;
@@ -372,7 +372,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
         return;
       }
       toast({ title: 'Thành công', description: 'Đã xóa Flash Sale' });
-      
+
       // Remove from local state & trigger sync
       setFlashSales(prev => prev.filter(s => s.flash_sale_id !== selectedSale.flash_sale_id));
       setSelectedSale(null);
@@ -448,14 +448,14 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
       try {
         const schedules = selectedTimeSlots.map(timeslotId => {
           const slot = timeSlots.find(ts => ts.timeslot_id === timeslotId);
-          return { 
-            timeslot_id: timeslotId, 
-            start_time: slot?.start_time || 0, 
+          return {
+            timeslot_id: timeslotId,
+            start_time: slot?.start_time || 0,
             end_time: slot?.end_time || 0,
-            items_data: itemsToAdd 
+            items_data: itemsToAdd
           };
         });
-        const { data, error } = await supabase.functions.invoke('shopee-scheduler', {
+        const { data, error } = await supabase.functions.invoke('apishopee-scheduler', {
           body: { action: 'schedule', shop_id: token.shop_id, source_flash_sale_id: selectedSale?.flash_sale_id, schedules, minutes_before: minutesBefore },
         });
         if (error) throw error;
@@ -474,14 +474,14 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
     let successCount = 0;
     for (const timeslotId of selectedTimeSlots) {
       try {
-        const createRes = await supabase.functions.invoke('shopee-flash-sale', {
+        const createRes = await supabase.functions.invoke('apishopee-flash-sale', {
           body: { action: 'create-flash-sale', shop_id: token.shop_id, timeslot_id: timeslotId },
         });
         if (createRes.error || createRes.data?.error) continue;
         const newFlashSaleId = createRes.data?.response?.flash_sale_id;
         if (!newFlashSaleId) continue;
 
-        await supabase.functions.invoke('shopee-flash-sale', {
+        await supabase.functions.invoke('apishopee-flash-sale', {
           body: { action: 'add-items', shop_id: token.shop_id, flash_sale_id: newFlashSaleId, items: itemsToAdd },
         });
         successCount++;
@@ -493,7 +493,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
     toast({ title: 'Hoàn thành', description: `Copy thành công ${successCount}/${selectedTimeSlots.length} time slots` });
     setShowCopyDialog(false);
     setCopying(false);
-    
+
     // Trigger sync để cập nhật DB
     triggerSync();
   };
@@ -503,7 +503,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
   // ============================================
   // COMPUTED VALUES
   // ============================================
-  
+
   const filteredSales = filterType === '0' ? flashSales : flashSales.filter(s => s.type === Number(filterType));
   const totalPages = Math.ceil(filteredSales.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -538,18 +538,17 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
               <button
                 key={tab.value}
                 onClick={() => { setFilterType(tab.value); setCurrentPage(1); }}
-                className={`py-3 text-sm font-medium border-b-2 transition-colors ${
-                  filterType === tab.value
-                    ? 'border-orange-500 text-orange-500'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                className={`py-3 text-sm font-medium border-b-2 transition-colors ${filterType === tab.value
+                  ? 'border-orange-500 text-orange-500'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
-          <Button 
-            className="bg-orange-500 hover:bg-orange-600 text-sm" 
+          <Button
+            className="bg-orange-500 hover:bg-orange-600 text-sm"
             size="sm"
             onClick={triggerSync}
             disabled={syncing || !isAuthenticated}
@@ -584,7 +583,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
             <TableBody>
               {paginatedSales.map((sale) => {
                 const typeInfo = TYPE_MAP[sale.type];
-                
+
                 return (
                   <TableRow key={sale.id} className="border-b hover:bg-gray-50">
                     <TableCell className="py-4">
@@ -608,13 +607,13 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
                     </TableCell>
                     <TableCell className="py-4">
                       <button
-                        onClick={() => { 
-                          setSelectedSale(sale); 
-                          setSelectedTimeSlots([]); 
-                          setShowCopyDialog(true); 
+                        onClick={() => {
+                          setSelectedSale(sale);
+                          setSelectedTimeSlots([]);
+                          setShowCopyDialog(true);
                           // Load data in background
-                          fetchItems(sale.flash_sale_id); 
-                          fetchTimeSlots(); 
+                          fetchItems(sale.flash_sale_id);
+                          fetchTimeSlots();
                         }}
                         className="text-blue-500 hover:text-blue-600 text-sm"
                       >
@@ -656,38 +655,37 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               )}
-              {syncProgress.status === 'syncing' ? 'Đang đồng bộ...' : 
-               syncProgress.status === 'done' ? 'Hoàn tất đồng bộ' : 'Lỗi đồng bộ'}
+              {syncProgress.status === 'syncing' ? 'Đang đồng bộ...' :
+                syncProgress.status === 'done' ? 'Hoàn tất đồng bộ' : 'Lỗi đồng bộ'}
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="py-4">
             {/* Progress bar - Real progress */}
             <div className="w-full bg-slate-200 rounded-full h-2.5 mb-4">
-              <div 
-                className={`h-2.5 rounded-full transition-all duration-500 ${
-                  syncProgress.status === 'error' ? 'bg-red-500' : 'bg-green-500'
-                }`}
-                style={{ 
-                  width: syncProgress.total > 0 
+              <div
+                className={`h-2.5 rounded-full transition-all duration-500 ${syncProgress.status === 'error' ? 'bg-red-500' : 'bg-green-500'
+                  }`}
+                style={{
+                  width: syncProgress.total > 0
                     ? `${Math.round((syncProgress.synced / syncProgress.total) * 100)}%`
                     : syncProgress.status === 'done' ? '100%' : '30%'
                 }}
               />
             </div>
-            
+
             {/* Progress text */}
             {syncProgress.total > 0 && (
               <p className="text-xs text-slate-400 mb-2">
                 {syncProgress.synced}/{syncProgress.total} chương trình ({Math.round((syncProgress.synced / syncProgress.total) * 100)}%)
               </p>
             )}
-            
+
             {/* Message */}
             <p className={`text-sm ${syncProgress.status === 'error' ? 'text-red-600' : 'text-slate-600'}`}>
               {syncProgress.message}
             </p>
-            
+
             {/* Stats */}
             {syncProgress.status === 'done' && syncProgress.total > 0 && (
               <div className="mt-3 p-3 bg-green-50 rounded-lg">
@@ -697,10 +695,10 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
               </div>
             )}
           </div>
-          
+
           <DialogFooter>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => setShowSyncProgress(false)}
               disabled={syncProgress.status === 'syncing'}
             >
@@ -724,7 +722,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
             </DialogTitle>
             <DialogDescription>Xem thông tin chi tiết và danh sách sản phẩm</DialogDescription>
           </DialogHeader>
-          
+
           {selectedSale && (
             <div className="flex-1 overflow-y-auto space-y-4">
               <div className="bg-gradient-to-r from-orange-500 to-red-500 rounded-xl p-4 text-white">
@@ -848,7 +846,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
             <DialogTitle>Copy Flash Sale sang Time Slot khác</DialogTitle>
             <DialogDescription>Chọn time slot để copy sản phẩm từ Flash Sale này</DialogDescription>
           </DialogHeader>
-          
+
           <div className="flex-1 overflow-y-auto space-y-4">
             <div className="flex gap-4 p-3 bg-slate-50 rounded-lg">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -879,7 +877,7 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
                   {selectedTimeSlots.length === timeSlots.filter(ts => !scheduledTimeslots.has(ts.timeslot_id)).length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                 </Button>
               </div>
-              
+
               {loadingTimeSlots ? (
                 <div className="text-center py-8 text-slate-400">Đang tải time slots...</div>
               ) : (
@@ -891,29 +889,28 @@ const FlashSalePanel = forwardRef<FlashSalePanelRef>((_, ref) => {
                     const startTimeStr = startDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                     const endTimeStr = endDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                     const isScheduled = scheduledTimeslots.has(slot.timeslot_id);
-                    
+
                     return (
-                      <label 
-                        key={slot.timeslot_id} 
-                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
-                          isScheduled 
-                            ? 'border-violet-300 bg-violet-50 cursor-not-allowed opacity-70'
-                            : selectedTimeSlots.includes(slot.timeslot_id) 
-                              ? 'border-orange-500 bg-orange-50 cursor-pointer' 
-                              : 'border-slate-200 hover:bg-slate-50 cursor-pointer'
-                        }`}
+                      <label
+                        key={slot.timeslot_id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${isScheduled
+                          ? 'border-violet-300 bg-violet-50 cursor-not-allowed opacity-70'
+                          : selectedTimeSlots.includes(slot.timeslot_id)
+                            ? 'border-orange-500 bg-orange-50 cursor-pointer'
+                            : 'border-slate-200 hover:bg-slate-50 cursor-pointer'
+                          }`}
                       >
-                        <Checkbox 
-                          checked={selectedTimeSlots.includes(slot.timeslot_id)} 
+                        <Checkbox
+                          checked={selectedTimeSlots.includes(slot.timeslot_id)}
                           disabled={isScheduled}
                           onCheckedChange={() => {
                             if (isScheduled) return;
-                            setSelectedTimeSlots(prev => 
-                              prev.includes(slot.timeslot_id) 
-                                ? prev.filter(id => id !== slot.timeslot_id) 
+                            setSelectedTimeSlots(prev =>
+                              prev.includes(slot.timeslot_id)
+                                ? prev.filter(id => id !== slot.timeslot_id)
                                 : [...prev, slot.timeslot_id]
                             );
-                          }} 
+                          }}
                         />
                         <div className="flex-1 flex items-center justify-between">
                           <span className="font-medium text-sm text-slate-700">{dayStr}</span>

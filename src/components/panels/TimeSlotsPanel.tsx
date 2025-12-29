@@ -63,7 +63,7 @@ export default function TimeSlotsPanel() {
     setLoading(true);
     try {
       const now = Math.floor(Date.now() / 1000) + 10;
-      const { data, error } = await supabase.functions.invoke<ApiResponse>('shopee-flash-sale', {
+      const { data, error } = await supabase.functions.invoke<ApiResponse>('apishopee-flash-sale', {
         body: {
           action: 'get-time-slots',
           shop_id: token.shop_id,

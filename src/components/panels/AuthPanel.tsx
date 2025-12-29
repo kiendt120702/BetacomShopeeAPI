@@ -6,7 +6,7 @@ import { useShopeeAuth } from '@/hooks/useShopeeAuth';
 import { SHOPEE_CONFIG } from '@/lib/shopee';
 
 const CALLBACK_URL =
-  import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'https://ops.betacom.agency/auth/callback';
+  process.env.NEXT_PUBLIC_SHOPEE_CALLBACK_URL || 'https://ops.betacom.agency/auth/callback';
 
 export default function AuthPanel() {
   const {
@@ -116,7 +116,7 @@ export default function AuthPanel() {
         ) : (
           <div className="text-center py-4">
             <p className="text-gray-500 mb-4">Chưa có token. Vui lòng đăng nhập.</p>
-            
+
             <button
               onClick={() => login(CALLBACK_URL)}
               disabled={!isConfigured || isLoading}

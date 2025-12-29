@@ -41,7 +41,7 @@ export interface CachedFlashSale {
  */
 export async function getFlashSalesFromCache(shopId: number): Promise<CachedFlashSale[]> {
   const { data, error } = await supabase
-    .from('flash_sale_data')
+    .from('apishopee_flash_sale_data')
     .select('*')
     .eq('shop_id', shopId)
     .order('type', { ascending: true }); // Sort by type: Đang chạy > Sắp tới > Kết thúc
@@ -80,7 +80,7 @@ export async function saveFlashSalesToCache(
   }));
 
   const { error } = await supabase
-    .from('flash_sale_data')
+    .from('apishopee_flash_sale_data')
     .upsert(cacheData, { onConflict: 'shop_id,flash_sale_id' });
 
   if (error) {

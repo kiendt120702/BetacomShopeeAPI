@@ -61,7 +61,7 @@ export default function ScheduledPanel() {
   const [processing, setProcessing] = useState(false);
   const [schedules, setSchedules] = useState<ScheduledItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  
+
   // Edit dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ScheduledItem | null>(null);
@@ -89,11 +89,11 @@ export default function ScheduledPanel() {
     const startDate = new Date(startTs * 1000);
     // Nếu có end_time thì dùng, không thì mặc định +3 giờ
     const endDate = endTs ? new Date(endTs * 1000) : new Date((startTs + 3 * 60 * 60) * 1000);
-    
+
     const startTime = startDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     const endTime = endDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     const dateStr = `${String(startDate.getDate()).padStart(2, '0')}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${startDate.getFullYear()}`;
-    
+
     // Format: "15:00 27-12-2025 - 17:00"
     return `${startTime} ${dateStr} - ${endTime}`;
   };
@@ -124,7 +124,7 @@ export default function ScheduledPanel() {
     if (!confirm('Bạn có chắc muốn hủy lịch hẹn này?')) return;
 
     try {
-      const { error } = await supabase.functions.invoke('shopee-scheduler', {
+      const { error } = await supabase.functions.invoke('apishopee-scheduler', {
         body: { action: 'cancel', shop_id: token.shop_id, schedule_id: id },
       });
 
@@ -139,7 +139,7 @@ export default function ScheduledPanel() {
   const handleProcessNow = async () => {
     setProcessing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-scheduler', {
+      const { data, error } = await supabase.functions.invoke('apishopee-scheduler', {
         body: { action: 'process' },
       });
 
@@ -155,15 +155,15 @@ export default function ScheduledPanel() {
 
   const handleForceRun = async (scheduleId: string) => {
     if (!confirm('Chạy ngay lịch này? (bỏ qua thời gian hẹn)')) return;
-    
+
     setProcessing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-scheduler', {
+      const { data, error } = await supabase.functions.invoke('apishopee-scheduler', {
         body: { action: 'force-run', schedule_id: scheduleId },
       });
 
       if (error) throw error;
-      toast({ 
+      toast({
         title: data?.success ? 'Thành công!' : 'Thất bại',
         description: data?.message || 'Đã xử lý',
         variant: data?.success ? 'default' : 'destructive',
@@ -191,11 +191,11 @@ export default function ScheduledPanel() {
     setSaving(true);
     try {
       const newScheduledAt = new Date(`${editDate}T${editTime}:00`);
-      
-      const { data, error } = await supabase.functions.invoke('shopee-scheduler', {
-        body: { 
-          action: 'update', 
-          shop_id: token.shop_id, 
+
+      const { data, error } = await supabase.functions.invoke('apishopee-scheduler', {
+        body: {
+          action: 'update',
+          shop_id: token.shop_id,
           schedule_id: editingSchedule.id,
           scheduled_at: newScheduledAt.toISOString(),
         },
@@ -207,10 +207,10 @@ export default function ScheduledPanel() {
       toast({ title: 'Thành công', description: 'Đã cập nhật thời gian chạy' });
       setEditDialogOpen(false);
       setEditingSchedule(null);
-      
+
       // Update local state
-      setSchedules(prev => prev.map(s => 
-        s.id === editingSchedule.id 
+      setSchedules(prev => prev.map(s =>
+        s.id === editingSchedule.id
           ? { ...s, scheduled_at: newScheduledAt.toISOString() }
           : s
       ));
@@ -239,8 +239,8 @@ export default function ScheduledPanel() {
   const completedCount = schedules.filter(s => s.status === 'completed').length;
   const failedCount = schedules.filter(s => s.status === 'failed').length;
 
-  const filteredSchedules = filterStatus === 'all' 
-    ? schedules 
+  const filteredSchedules = filterStatus === 'all'
+    ? schedules
     : schedules.filter(s => s.status === filterStatus);
 
   return (
@@ -259,7 +259,7 @@ export default function ScheduledPanel() {
               <p className="text-sm text-slate-400">{schedules.length} lịch hẹn</p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
             {/* Stats badges */}
             <div className="hidden md:flex items-center gap-2">
@@ -288,9 +288,9 @@ export default function ScheduledPanel() {
               </SelectContent>
             </Select>
 
-            <Button 
+            <Button
               variant="outline"
-              onClick={() => fetchSchedules()} 
+              onClick={() => fetchSchedules()}
               disabled={loading}
             >
               {loading ? (
@@ -304,10 +304,10 @@ export default function ScheduledPanel() {
                 </svg>
               )}
             </Button>
-            
-            <Button 
-              className="bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600" 
-              onClick={handleProcessNow} 
+
+            <Button
+              className="bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600"
+              onClick={handleProcessNow}
               disabled={processing || pendingCount === 0 || !isAuthenticated}
             >
               {processing ? 'Đang chạy...' : 'Chạy ngay'}
@@ -351,9 +351,9 @@ export default function ScheduledPanel() {
               <TableBody>
                 {filteredSchedules.map((item) => {
                   const statusInfo = STATUS_MAP[item.status];
-                  
+
                   return (
-                    <TableRow 
+                    <TableRow
                       key={item.id}
                       className="hover:bg-slate-50"
                     >
@@ -452,8 +452,8 @@ export default function ScheduledPanel() {
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
               Hủy
             </Button>
-            <Button 
-              onClick={handleSaveEdit} 
+            <Button
+              onClick={handleSaveEdit}
               disabled={saving || !editDate || !editTime}
               className="bg-violet-500 hover:bg-violet-600"
             >

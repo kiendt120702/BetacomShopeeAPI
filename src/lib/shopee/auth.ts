@@ -9,12 +9,12 @@ import type { AccessToken } from './types';
 /**
  * Tạo URL xác thực để redirect user đến Shopee
  * @param callbackUrl - URL callback sau khi user authorize
- * @param partnerAccountId - ID của partner account (optional)
+ * @param _partnerAccountId - ID của partner account (deprecated - không dùng nữa)
  */
-export function getAuthorizationUrl(callbackUrl: string, partnerAccountId?: string): string | Promise<string> {
+export function getAuthorizationUrl(callbackUrl: string, _partnerAccountId?: string): string | Promise<string> {
   const sdk = getShopeeSDK();
-  // SDK có thể trả về Promise nếu dùng Supabase backend
-  return sdk.getAuthorizationUrl(callbackUrl, partnerAccountId);
+  // SDK chỉ nhận 1 argument
+  return sdk.getAuthorizationUrl(callbackUrl);
 }
 
 /**
@@ -26,10 +26,14 @@ export function getAuthorizationUrl(callbackUrl: string, partnerAccountId?: stri
 export async function authenticateWithCode(
   code: string,
   shopId?: number,
-  partnerAccountId?: string
+  _partnerAccountId?: string
 ): Promise<AccessToken> {
   const sdk = getShopeeSDK();
-  return await sdk.authenticateWithCode(code, shopId, partnerAccountId);
+  const result = await sdk.authenticateWithCode(code, shopId);
+  if (!result) {
+    throw new Error('Failed to authenticate with code');
+  }
+  return result;
 }
 
 /**
@@ -50,7 +54,11 @@ export async function refreshToken(
   merchantId?: number
 ): Promise<AccessToken> {
   const sdk = getShopeeSDK();
-  return await sdk.refreshToken(shopId, merchantId);
+  const result = await sdk.refreshToken(shopId, merchantId);
+  if (!result) {
+    throw new Error('Failed to refresh token');
+  }
+  return result;
 }
 
 /**
@@ -59,14 +67,14 @@ export async function refreshToken(
  */
 export async function isTokenValid(bufferMinutes = 5): Promise<boolean> {
   const token = await getStoredToken();
-  
+
   if (!token) return false;
-  
+
   if (!token.expired_at) return true; // Không có expiry thì coi như valid
-  
+
   const now = Date.now();
   const bufferMs = bufferMinutes * 60 * 1000;
-  
+
   return now < token.expired_at - bufferMs;
 }
 
@@ -75,22 +83,22 @@ export async function isTokenValid(bufferMinutes = 5): Promise<boolean> {
  */
 export async function getValidToken(): Promise<AccessToken> {
   const isValid = await isTokenValid();
-  
+
   if (!isValid) {
     const token = await getStoredToken();
     if (!token) {
       throw new Error('No token found. Please authenticate first.');
     }
-    
+
     console.log('[AUTH] Token expired or expiring soon, refreshing...');
     return await refreshToken(token.shop_id, token.merchant_id);
   }
-  
+
   const token = await getStoredToken();
   if (!token) {
     throw new Error('No token found. Please authenticate first.');
   }
-  
+
   return token;
 }
 
@@ -103,11 +111,11 @@ export async function handleOAuthCallback(
 ): Promise<AccessToken> {
   const code = searchParams.get('code');
   const shopId = searchParams.get('shop_id');
-  
+
   if (!code) {
     throw new Error('Missing authorization code in callback');
   }
-  
+
   return await authenticateWithCode(
     code,
     shopId ? Number(shopId) : undefined

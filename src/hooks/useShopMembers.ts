@@ -39,19 +39,15 @@ export const useShopMembers = (shopId?: number) => {
 
     setLoading(true)
     try {
-      const response = await fetch(`${supabase.supabaseUrl}/functions/v1/shop-members?shop_id=${targetShopId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-          'Content-Type': 'application/json',
+      const { data, error } = await supabase.functions.invoke('apishopee-shop-members', {
+        body: {
+          action: 'list',
+          shop_id: targetShopId,
         },
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-      }
+      if (error) throw error
 
-      const data = await response.json()
       setMembers(data.members || [])
       setCurrentUserRole(data.current_user_role)
     } catch (error: any) {
@@ -95,7 +91,7 @@ export const useShopMembers = (shopId?: number) => {
 
     setLoading(true)
     try {
-      const { data, error } = await supabase.functions.invoke('shop-members', {
+      const { data, error } = await supabase.functions.invoke('apishopee-shop-members', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -139,7 +135,7 @@ export const useShopMembers = (shopId?: number) => {
 
     setLoading(true)
     try {
-      const { data, error } = await supabase.functions.invoke('shop-members', {
+      const { data, error } = await supabase.functions.invoke('apishopee-shop-members', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -182,7 +178,7 @@ export const useShopMembers = (shopId?: number) => {
 
     setLoading(true)
     try {
-      const { data, error } = await supabase.functions.invoke('shop-members', {
+      const { data, error } = await supabase.functions.invoke('apishopee-shop-members', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -225,12 +221,39 @@ export const useShopMembers = (shopId?: number) => {
     if (!user) return false
 
     try {
+      // Lấy shop internal ID từ shop_id
+      const { data: shopData, error: shopError } = await supabase
+        .from('apishopee_shops')
+        .select('id')
+        .eq('shop_id', shopId)
+        .single()
+
+      if (shopError || !shopData) {
+        console.error('Shop not found:', shopError)
+        return false
+      }
+
+      // Lấy admin role ID
+      const { data: roleData, error: roleError } = await supabase
+        .from('apishopee_roles')
+        .select('id')
+        .eq('name', 'admin')
+        .single()
+
+      if (roleError || !roleData) {
+        console.error('Admin role not found:', roleError)
+        return false
+      }
+
       const { error } = await supabase
-        .from('shop_members')
-        .insert({
-          shop_id: shopId,
-          user_id: user.id,
-          role: 'admin'
+        .from('apishopee_shop_members')
+        .upsert({
+          shop_id: shopData.id, // UUID internal ID
+          profile_id: user.id,
+          role_id: roleData.id,
+          is_active: true
+        }, {
+          onConflict: 'shop_id,profile_id'
         })
 
       if (error) throw error

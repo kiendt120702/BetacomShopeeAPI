@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { DataTable, CellShopInfo, CellBadge, CellText, CellActions } from '@/components/ui/data-table';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -24,12 +26,10 @@ interface Shop {
   shop_name: string | null;
   shop_logo: string | null;
   region: string | null;
-  partner_id: number | null;
+  partner_account_id: string | null;
   created_at: string;
   token_updated_at: string | null;
-  expired_at: number | null;
-  auth_time: number | null;
-  expire_time: number | null;
+  token_expired_at: number | null;
 }
 
 interface ShopWithRole extends Shop {
@@ -43,21 +43,30 @@ export function ShopManagementPanel() {
   const [shops, setShops] = useState<ShopWithRole[]>([]);
   const [refreshingShop, setRefreshingShop] = useState<number | null>(null);
   const [reconnectingShop, setReconnectingShop] = useState<number | null>(null);
-  
+
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [shopToDelete, setShopToDelete] = useState<ShopWithRole | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Connect new shop dialog
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
+  const [partnerIdInput, setPartnerIdInput] = useState('');
+  const [partnerKeyInput, setPartnerKeyInput] = useState('');
+  const [partnerNameInput, setPartnerNameInput] = useState('');
+  const [connecting, setConnecting] = useState(false);
+
   const loadShops = async () => {
     if (!user?.id) return;
-    
+
     setLoading(true);
     try {
+      // Query shop_members với role info từ apishopee_roles
       const { data: memberData, error: memberError } = await supabase
-        .from('shop_members')
-        .select('shop_id, role')
-        .eq('user_id', user.id);
+        .from('apishopee_shop_members')
+        .select('shop_id, role_id, apishopee_roles(name)')
+        .eq('profile_id', user.id)
+        .eq('is_active', true);
 
       if (memberError) throw memberError;
 
@@ -68,12 +77,13 @@ export function ShopManagementPanel() {
       }
 
       const shopIds = memberData.map(m => m.shop_id);
-      const roleMap = new Map(memberData.map(m => [m.shop_id, m.role]));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const roleMap = new Map(memberData.map(m => [m.shop_id, (m.apishopee_roles as any)?.name || 'member']));
 
       const { data: shopsData, error: shopsError } = await supabase
-        .from('shops')
-        .select('shop_id, shop_name, shop_logo, region, partner_id, created_at, token_updated_at, expired_at, auth_time, expire_time')
-        .in('shop_id', shopIds);
+        .from('apishopee_shops')
+        .select('id, shop_id, shop_name, shop_logo, region, partner_account_id, created_at, token_updated_at, token_expired_at')
+        .in('id', shopIds);
 
       if (shopsError) throw shopsError;
 
@@ -102,14 +112,14 @@ export function ShopManagementPanel() {
   const handleRefreshShopName = async (shopId: number) => {
     setRefreshingShop(shopId);
     try {
-      const { data, error } = await supabase.functions.invoke('shopee-shop', {
+      const { data, error } = await supabase.functions.invoke('apishopee-shop', {
         body: { action: 'get-full-info', shop_id: shopId, force_refresh: true },
       });
 
       if (error) throw error;
 
       if (data?.shop_name) {
-        setShops(prev => prev.map(s => 
+        setShops(prev => prev.map(s =>
           s.shop_id === shopId ? { ...s, shop_name: data.shop_name, shop_logo: data.shop_logo } : s
         ));
         toast({ title: 'Thành công', description: `Đã cập nhật: ${data.shop_name}` });
@@ -129,13 +139,13 @@ export function ShopManagementPanel() {
     setReconnectingShop(shop.shop_id);
     try {
       let partnerInfo = null;
-      if (shop.partner_id) {
+      if (shop.partner_account_id) {
         const { data: partnerData } = await supabase
-          .from('partner_accounts')
+          .from('apishopee_partner_accounts')
           .select('partner_id, partner_key, partner_name')
-          .eq('partner_id', shop.partner_id)
+          .eq('id', shop.partner_account_id)
           .single();
-        
+
         if (partnerData) {
           partnerInfo = {
             partner_id: partnerData.partner_id,
@@ -162,14 +172,14 @@ export function ShopManagementPanel() {
     setDeleting(true);
     try {
       const { error: membersError } = await supabase
-        .from('shop_members')
+        .from('apishopee_shop_members')
         .delete()
         .eq('shop_id', shopToDelete.shop_id);
 
       if (membersError) throw membersError;
 
       const { error: shopError } = await supabase
-        .from('shops')
+        .from('apishopee_shops')
         .delete()
         .eq('shop_id', shopToDelete.shop_id);
 
@@ -192,20 +202,43 @@ export function ShopManagementPanel() {
   };
 
   const handleConnectNewShop = async () => {
+    // Mở dialog để nhập partner credentials
+    setConnectDialogOpen(true);
+  };
+
+  const handleSubmitConnect = async () => {
+    if (!partnerIdInput || !partnerKeyInput) {
+      toast({
+        title: 'Lỗi',
+        description: 'Vui lòng nhập Partner ID và Partner Key',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setConnecting(true);
     try {
-      await login();
+      const partnerInfo = {
+        partner_id: Number(partnerIdInput),
+        partner_key: partnerKeyInput,
+        partner_name: partnerNameInput || undefined,
+      };
+
+      await login(undefined, undefined, partnerInfo);
+      // Dialog sẽ tự đóng khi redirect
     } catch (err) {
       toast({
         title: 'Lỗi',
         description: (err as Error).message,
         variant: 'destructive',
       });
+      setConnecting(false);
     }
   };
 
   const formatDate = (timestamp: number | null) => {
     if (!timestamp) return '-';
-    return new Date(timestamp * 1000).toLocaleDateString('vi-VN', {
+    return new Date(timestamp).toLocaleDateString('vi-VN', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
@@ -244,17 +277,10 @@ export function ShopManagementPanel() {
       ),
     },
     {
-      key: 'auth_time',
-      header: 'Ủy quyền',
+      key: 'token_expired_at',
+      header: 'Token hết hạn',
       render: (shop: ShopWithRole) => (
-        <CellText muted>{formatDate(shop.auth_time)}</CellText>
-      ),
-    },
-    {
-      key: 'expire_time',
-      header: 'Hết hạn',
-      render: (shop: ShopWithRole) => (
-        <CellText muted>{formatDate(shop.expire_time)}</CellText>
+        <CellText muted>{formatDate(shop.token_expired_at)}</CellText>
       ),
     },
     {
@@ -311,7 +337,7 @@ export function ShopManagementPanel() {
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center justify-between">
             <span>Shop có quyền truy cập ({shops.length})</span>
-            <Button 
+            <Button
               className="bg-orange-500 hover:bg-orange-600"
               onClick={handleConnectNewShop}
             >
@@ -358,6 +384,68 @@ export function ShopManagementPanel() {
             </Button>
             <Button variant="destructive" onClick={handleDeleteShop} disabled={deleting}>
               {deleting ? 'Đang xóa...' : 'Xóa Shop'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Connect New Shop Dialog */}
+      <Dialog open={connectDialogOpen} onOpenChange={setConnectDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Kết nối Shop mới</DialogTitle>
+            <DialogDescription>
+              Nhập thông tin Partner từ Shopee Open Platform để kết nối shop.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="partner_id">Partner ID <span className="text-red-500">*</span></Label>
+              <Input
+                id="partner_id"
+                type="number"
+                placeholder="Nhập Partner ID"
+                value={partnerIdInput}
+                onChange={(e) => setPartnerIdInput(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="partner_key">Partner Key <span className="text-red-500">*</span></Label>
+              <Input
+                id="partner_key"
+                type="password"
+                placeholder="Nhập Partner Key"
+                value={partnerKeyInput}
+                onChange={(e) => setPartnerKeyInput(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="partner_name">Tên Partner (tùy chọn)</Label>
+              <Input
+                id="partner_name"
+                placeholder="VD: My App Partner"
+                value={partnerNameInput}
+                onChange={(e) => setPartnerNameInput(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConnectDialogOpen(false)}>
+              Hủy
+            </Button>
+            <Button
+              className="bg-orange-500 hover:bg-orange-600"
+              onClick={handleSubmitConnect}
+              disabled={connecting || !partnerIdInput || !partnerKeyInput}
+            >
+              {connecting ? (
+                <>
+                  <Spinner size="sm" className="mr-2" />
+                  Đang kết nối...
+                </>
+              ) : (
+                'Kết nối với Shopee'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

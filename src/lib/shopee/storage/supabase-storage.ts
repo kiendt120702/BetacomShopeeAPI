@@ -1,8 +1,8 @@
 /**
  * Supabase Token Storage
- * Lưu token vào bảng `shops` trong Supabase
+ * Lưu token vào bảng `apishopee_shops` trong Supabase
  * 
- * Schema: shops có shop_id là unique (1 shop = 1 row chứa cả token + info)
+ * Schema: apishopee_shops có shop_id là unique (1 shop = 1 row chứa cả token + info)
  */
 
 import type { TokenStorage } from './token-storage.interface';
@@ -32,7 +32,7 @@ export class SupabaseTokenStorage implements TokenStorage {
     try {
       // Check if shop exists
       const { data: existing } = await supabase
-        .from('shops')
+        .from('apishopee_shops')
         .select('id')
         .eq('shop_id', shopId)
         .single();
@@ -50,14 +50,14 @@ export class SupabaseTokenStorage implements TokenStorage {
       if (existing) {
         // Update existing shop
         const result = await supabase
-          .from('shops')
+          .from('apishopee_shops')
           .update(tokenData)
           .eq('id', existing.id);
         error = result.error;
       } else {
         // Insert new shop
         const result = await supabase
-          .from('shops')
+          .from('apishopee_shops')
           .insert({ shop_id: shopId, ...tokenData });
         error = result.error;
       }
@@ -82,7 +82,7 @@ export class SupabaseTokenStorage implements TokenStorage {
 
     try {
       const { data, error } = await supabase
-        .from('shops')
+        .from('apishopee_shops')
         .select('access_token, refresh_token, expire_in, expired_at, shop_id, merchant_id')
         .eq('shop_id', this.shopId)
         .single();
@@ -120,7 +120,7 @@ export class SupabaseTokenStorage implements TokenStorage {
     try {
       // Chỉ clear token, không xóa shop
       const { error } = await supabase
-        .from('shops')
+        .from('apishopee_shops')
         .update({
           access_token: null,
           refresh_token: null,

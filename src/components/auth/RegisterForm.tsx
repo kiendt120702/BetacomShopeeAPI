@@ -48,13 +48,13 @@ export function RegisterForm({ onToggleMode }: RegisterFormProps) {
     setSuccess(false)
 
     try {
-      const { error } = await signUp(data.email, data.password, data.fullName)
-      
-      if (error) {
-        if (error.message.includes('already registered')) {
+      const result = await signUp(data.email, data.password, data.fullName)
+
+      if (result.error) {
+        if (result.error.includes('already registered')) {
           setError('Email này đã được đăng ký')
         } else {
-          setError(error.message)
+          setError(result.error)
         }
       } else {
         setSuccess(true)

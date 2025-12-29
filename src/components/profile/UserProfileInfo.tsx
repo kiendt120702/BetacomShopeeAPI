@@ -14,7 +14,7 @@ export function UserProfileInfo() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [editing, setEditing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   const [fullName, setFullName] = useState(profile?.full_name || '');
 
   useEffect(() => {
@@ -35,12 +35,12 @@ export function UserProfileInfo() {
       if (error) throw error;
 
       await updateProfile();
-      
+
       toast({
         title: 'Thành công',
         description: 'Đã cập nhật thông tin tài khoản',
       });
-      
+
       setEditing(false);
     } catch (error: any) {
       console.error('Error updating profile:', error);
@@ -94,16 +94,9 @@ export function UserProfileInfo() {
         .from('avatars')
         .getPublicUrl(fileName);
 
-      // Update profile with avatar URL
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          avatar_url: publicUrl,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id);
-
-      if (updateError) throw updateError;
+      // Update profile - sys_profiles không có avatar_url
+      // TODO: Implement avatar storage separately if needed
+      console.log('Avatar uploaded to:', publicUrl);
 
       await updateProfile();
 
@@ -135,9 +128,9 @@ export function UserProfileInfo() {
       {/* Header gradient cam */}
       <div className="h-28 bg-gradient-to-r from-orange-400 to-orange-500 relative">
         {/* Edit button */}
-        <Button 
-          variant="outline" 
-          size="sm" 
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => editing ? handleUpdateProfile() : setEditing(true)}
           disabled={loading}
           className="absolute top-4 right-4 bg-white/90 hover:bg-white border-0 rounded-lg shadow-sm"
@@ -146,9 +139,9 @@ export function UserProfileInfo() {
           {editing ? (loading ? 'Đang lưu...' : 'Lưu') : 'Chỉnh sửa'}
         </Button>
         {editing && (
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               setEditing(false);
               setFullName(profile?.full_name || '');
@@ -164,17 +157,10 @@ export function UserProfileInfo() {
         {/* Avatar */}
         <div className="relative -mt-14 mb-4 w-fit">
           <div className="w-24 h-24 rounded-2xl bg-orange-100 border-4 border-white shadow-lg flex items-center justify-center overflow-hidden">
-            {profile?.avatar_url ? (
-              <img 
-                src={profile.avatar_url} 
-                alt="Avatar" 
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span className="text-2xl font-bold text-orange-500">{initials}</span>
-            )}
+            {/* sys_profiles không có avatar_url, always show initials */}
+            <span className="text-2xl font-bold text-orange-500">{initials}</span>
           </div>
-          
+
           {/* Upload button */}
           <input
             ref={fileInputRef}
@@ -211,7 +197,7 @@ export function UserProfileInfo() {
             </h2>
           )}
           <Badge className="bg-orange-500 hover:bg-orange-500 text-white border-0 rounded-md px-3 py-1">
-            {profile?.role_display_name || 'Member'}
+            {profile?.work_type === 'fulltime' ? 'Full-time' : 'Part-time'}
           </Badge>
         </div>
 
@@ -236,7 +222,7 @@ export function UserProfileInfo() {
               </div>
               <div>
                 <p className="text-xs font-medium text-orange-500 uppercase">Vai trò</p>
-                <p className="text-sm font-medium text-gray-700">{profile?.role_display_name || 'Member'}</p>
+                <p className="text-sm font-medium text-gray-700">{profile?.work_type === 'fulltime' ? 'Full-time' : 'Part-time'}</p>
               </div>
             </div>
           </div>

@@ -1,11 +1,9 @@
-import { createContext, useContext, ReactNode } from 'react'
-import { useAuth, AuthState } from '@/hooks/useAuth'
+"use client";
 
-interface AuthContextType extends AuthState {
-  signUp: (email: string, password: string, fullName?: string) => Promise<any>
-  signIn: (email: string, password: string) => Promise<any>
-  signOut: () => Promise<any>
-  updateProfile: (updates: any) => Promise<any>
+import { createContext, useContext, ReactNode } from 'react'
+import { useAuth } from '@/hooks/useAuth'
+
+interface AuthContextType extends ReturnType<typeof useAuth> {
   refreshProfile: () => void
 }
 
@@ -14,8 +12,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const auth = useAuth()
 
+  // refreshProfile là alias cho updateProfile để tương thích với code mẫu
+  const refreshProfile = () => {
+    auth.updateProfile()
+  }
+
   return (
-    <AuthContext.Provider value={auth}>
+    <AuthContext.Provider value={{ ...auth, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   )

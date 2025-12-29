@@ -40,12 +40,12 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
     setError(null)
 
     try {
-      const { error } = await signIn(data.email, data.password)
-      
-      if (error) {
-        setError(error.message === 'Invalid login credentials' 
-          ? 'Email hoặc mật khẩu không đúng' 
-          : error.message)
+      const result = await signIn(data.email, data.password)
+
+      if (result.error) {
+        setError(result.error === 'Invalid login credentials'
+          ? 'Email hoặc mật khẩu không đúng'
+          : result.error)
       }
     } catch (err) {
       setError('Đã xảy ra lỗi, vui lòng thử lại')

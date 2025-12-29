@@ -47,7 +47,7 @@ serve(async (req) => {
       case 'get-flash-sale-data': {
         // Lấy dữ liệu Flash Sale từ database
         const { data: flashSaleData, error: flashSaleError } = await supabase
-          .from('flash_sale_data')
+          .from('apishopee_flash_sale_data')
           .select('*')
           .eq('shop_id', shop_id)
           .eq('user_id', user_id)
@@ -59,7 +59,7 @@ serve(async (req) => {
         }
 
         if (!flashSaleData || flashSaleData.length === 0) {
-          result = { 
+          result = {
             error: 'no_data',
             message: 'Chưa có dữ liệu Flash Sale. Vui lòng đồng bộ từ Shopee.',
             needs_sync: true
@@ -101,7 +101,7 @@ serve(async (req) => {
         }
 
         if (!campaignData || campaignData.length === 0) {
-          result = { 
+          result = {
             error: 'no_data',
             message: 'Chưa có dữ liệu Ads Campaign. Vui lòng đồng bộ từ Shopee.',
             needs_sync: true

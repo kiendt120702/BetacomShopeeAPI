@@ -17,10 +17,10 @@ export const isBrowser = !isServer;
 
 // Config từ env
 export const SHOPEE_CONFIG = {
-  partner_id: Number(import.meta.env.VITE_SHOPEE_PARTNER_ID) || 0,
-  partner_key: import.meta.env.VITE_SHOPEE_PARTNER_KEY || '',
-  shop_id: Number(import.meta.env.VITE_SHOPEE_SHOP_ID) || undefined,
-  callback_url: import.meta.env.VITE_SHOPEE_CALLBACK_URL || 'https://ops.betacom.agency/auth/callback',
+  partner_id: Number(process.env.NEXT_PUBLIC_SHOPEE_PARTNER_ID) || 0,
+  partner_key: process.env.NEXT_PUBLIC_SHOPEE_PARTNER_KEY || '',
+  shop_id: Number(process.env.NEXT_PUBLIC_SHOPEE_SHOP_ID) || undefined,
+  callback_url: process.env.NEXT_PUBLIC_SHOPEE_CALLBACK_URL || 'https://ops.betacom.agency/auth/callback',
 };
 
 // Shopee Region enum
@@ -74,7 +74,7 @@ export function getAuthorizationUrl(redirectUri?: string): string {
   const callback = redirectUri || SHOPEE_CONFIG.callback_url;
   const timestamp = Math.floor(Date.now() / 1000);
   const path = '/api/v2/shop/auth_partner';
-  
+
   // Shopee auth URL format
   const baseUrl = BASE_URLS.GLOBAL;
   const params = new URLSearchParams({
@@ -85,7 +85,7 @@ export function getAuthorizationUrl(redirectUri?: string): string {
 
   // Note: Signature cần được tạo ở backend
   // Format: SHA256(partner_id + path + timestamp + partner_key)
-  
+
   return `${baseUrl}${path}?${params.toString()}`;
 }
 
@@ -115,13 +115,13 @@ export async function clearToken(): Promise<void> {
  */
 export async function isTokenValid(bufferMinutes = 5): Promise<boolean> {
   const token = await getStoredToken();
-  
+
   if (!token) return false;
   if (!token.expired_at) return true;
-  
+
   const now = Date.now();
   const bufferMs = bufferMinutes * 60 * 1000;
-  
+
   return now < token.expired_at - bufferMs;
 }
 
@@ -137,10 +137,10 @@ export async function authenticateWithCode(
   // 1. Gửi code đến backend của bạn
   // 2. Backend gọi Shopee API với SDK
   // 3. Backend trả về token cho frontend
-  
+
   console.warn('[Shopee] authenticateWithCode requires backend implementation');
   console.log('[Shopee] Received code:', code, 'shopId:', shopId);
-  
+
   // Mock token để test UI
   const mockToken: AccessToken = {
     access_token: 'mock_access_token_' + Date.now(),
@@ -150,7 +150,7 @@ export async function authenticateWithCode(
     shop_id: shopId,
     request_id: 'mock_request_' + Date.now(),
   };
-  
+
   await storeToken(mockToken);
   return mockToken;
 }
@@ -163,9 +163,9 @@ export async function refreshToken(
   merchantId?: number
 ): Promise<AccessToken> {
   console.warn('[Shopee] refreshToken requires backend implementation');
-  
+
   const currentToken = await getStoredToken();
-  
+
   const newToken: AccessToken = {
     access_token: 'mock_refreshed_token_' + Date.now(),
     refresh_token: currentToken?.refresh_token || 'mock_refresh_' + Date.now(),
@@ -175,7 +175,7 @@ export async function refreshToken(
     merchant_id: merchantId,
     request_id: 'mock_request_' + Date.now(),
   };
-  
+
   await storeToken(newToken);
   return newToken;
 }
@@ -188,11 +188,11 @@ export async function handleOAuthCallback(
 ): Promise<AccessToken> {
   const code = searchParams.get('code');
   const shopId = searchParams.get('shop_id');
-  
+
   if (!code) {
     throw new Error('Missing authorization code in callback');
   }
-  
+
   return await authenticateWithCode(
     code,
     shopId ? Number(shopId) : undefined

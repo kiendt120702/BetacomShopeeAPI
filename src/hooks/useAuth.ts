@@ -7,19 +7,21 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { User, Session } from '@supabase/supabase-js';
 
+// Profile theo schema sys_profiles hiện tại
 interface Profile {
   id: string;
   email: string;
   full_name: string | null;
-  avatar_url: string | null;
-  role_id: string;
-  role_name: string; // From roles table join
-  role_display_name: string; // From roles table join
+  phone: string | null;
+  work_type: 'fulltime' | 'parttime';
+  join_date: string | null;
   created_at: string;
   updated_at: string;
+  // Computed field for display
+  role_display_name?: string;
 }
 
-interface AuthState {
+export interface AuthState {
   user: User | null;
   session: Session | null;
   profile: Profile | null;
@@ -49,7 +51,7 @@ export function useAuth() {
     // Lấy session hiện tại
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!mounted) return;
-      
+
       if (session?.user) {
         // Có user -> load profile trước khi set isLoading = false
         setState(prev => ({
@@ -74,18 +76,18 @@ export function useAuth() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
-        
+
         // Bỏ qua INITIAL_SESSION vì đã xử lý ở getSession
         if (event === 'INITIAL_SESSION') return;
-        
+
         // Bỏ qua TOKEN_REFRESHED - không cần reload UI
         if (event === 'TOKEN_REFRESHED') return;
-        
+
         // Chỉ xử lý khi initial load đã xong
         if (!initialLoadDone) return;
 
         console.log('[useAuth] Auth state changed:', event);
-        
+
         if (event === 'SIGNED_IN' && session?.user) {
           // Chỉ reload nếu user khác
           if (state.user?.id !== session.user.id) {
@@ -118,7 +120,7 @@ export function useAuth() {
   // Đăng ký tài khoản mới
   const signUp = async (email: string, password: string, fullName?: string) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+
     try {
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -148,7 +150,7 @@ export function useAuth() {
   // Đăng nhập
   const signIn = async (email: string, password: string) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -175,7 +177,7 @@ export function useAuth() {
   // Đăng xuất
   const signOut = async () => {
     setState(prev => ({ ...prev, isLoading: true }));
-    
+
     try {
       await supabase.auth.signOut();
       setState({ user: null, session: null, profile: null, isLoading: false, error: null });
@@ -216,7 +218,7 @@ export function useAuth() {
 // Lưu thông tin shop Shopee vào database
 export async function saveUserShop(
   userId: string,
-  shopId: number,
+  shopeeShopId: number,
   accessToken: string,
   refreshToken: string,
   expiredAt: number,
@@ -229,29 +231,11 @@ export async function saveUserShop(
     partner_created_by?: string;
   }
 ) {
-  console.log('[saveUserShop] Starting...', { userId, shopId, partnerInfo });
+  console.log('[saveUserShop] Starting...', { userId, shopeeShopId, partnerInfo });
 
-  // 1. Tạo shop member relationship TRƯỚC
-  // Điều này đảm bảo user có quyền update shop (RLS policy yêu cầu user là admin)
-  const { error: memberError } = await supabase
-    .from('shop_members')
-    .upsert({
-      user_id: userId,
-      shop_id: shopId,
-      role: 'admin', // User kết nối shop sẽ là admin của shop đó
-    }, {
-      onConflict: 'user_id,shop_id',
-    });
-
-  if (memberError) {
-    console.error('[saveUserShop] Shop member error:', memberError);
-    throw memberError;
-  }
-  console.log('[saveUserShop] shop_members upserted successfully');
-
-  // 2. Upsert vào bảng shops (token và partner info được lưu trong bảng shops)
-  const shopData: any = {
-    shop_id: shopId,
+  // 1. Upsert vào bảng apishopee_shops
+  const shopData: Record<string, unknown> = {
+    shop_id: shopeeShopId,
     access_token: accessToken,
     refresh_token: refreshToken,
     expired_at: expiredAt,
@@ -260,107 +244,132 @@ export async function saveUserShop(
     updated_at: new Date().toISOString(),
   };
 
-  // Thêm partner info nếu có
-  if (partnerInfo) {
-    shopData.partner_id = partnerInfo.partner_id;
-    shopData.partner_key = partnerInfo.partner_key;
-    shopData.partner_name = partnerInfo.partner_name;
-    shopData.partner_created_by = partnerInfo.partner_created_by;
-  }
+  // Thêm partner info nếu có (lưu vào partner_accounts và link)
+  // Note: Hiện tại schema không có partner columns trong shops table
+  // Nếu cần, bạn có thể thêm migration để add columns
 
-  const { error: shopError } = await supabase
-    .from('shops')
+  const { data: upsertedShop, error: shopError } = await supabase
+    .from('apishopee_shops')
     .upsert(shopData, {
       onConflict: 'shop_id',
-    });
+    })
+    .select('id')
+    .single();
 
   if (shopError) {
     console.error('[saveUserShop] Shop error:', shopError);
     throw shopError;
   }
-  console.log('[saveUserShop] shops upserted successfully');
+  console.log('[saveUserShop] apishopee_shops upserted:', upsertedShop);
+
+  // 2. Get admin role
+  const { data: adminRole } = await supabase
+    .from('apishopee_roles')
+    .select('id')
+    .eq('name', 'admin')
+    .single();
+
+  if (!adminRole) {
+    console.error('[saveUserShop] Admin role not found');
+    throw new Error('Admin role not found');
+  }
+
+  // 3. Tạo shop member relationship
+  const { error: memberError } = await supabase
+    .from('apishopee_shop_members')
+    .upsert({
+      shop_id: upsertedShop.id, // UUID internal ID
+      profile_id: userId,
+      role_id: adminRole.id,
+      is_active: true,
+    }, {
+      onConflict: 'shop_id,profile_id',
+    });
+
+  if (memberError) {
+    console.error('[saveUserShop] Shop member error:', memberError);
+    throw memberError;
+  }
+  console.log('[saveUserShop] apishopee_shop_members upserted successfully');
 }
 
 // Lấy thông tin shop của user thông qua shop_members
 export async function getUserShops(userId: string) {
   try {
-    const { data, error } = await supabase
-      .from('shop_members')
-      .select(`
-        shop_id,
-        role,
-        shops (
-          shop_id,
-          shop_name,
-          region,
-          shop_logo
-        )
-      `)
-      .eq('user_id', userId);
+    // Step 1: Lấy danh sách shop_member của user
+    const { data: memberData, error: memberError } = await supabase
+      .from('apishopee_shop_members')
+      .select('id, shop_id, role_id, is_active')
+      .eq('profile_id', userId)
+      .eq('is_active', true);
 
-    if (error) {
-      console.error('[getUserShops] Error:', error);
+    if (memberError) {
+      console.error('[getUserShops] Member query error:', memberError);
       return [];
     }
 
-    // Transform data
-    return (data || []).map(item => {
-      const shop = item.shops as any;
+    if (!memberData || memberData.length === 0) {
+      console.log('[getUserShops] No shop memberships found for user');
+      return [];
+    }
+
+    // Step 2: Lấy thông tin shop cho từng membership
+    const shopIds = memberData.map(m => m.shop_id);
+    const { data: shopData, error: shopError } = await supabase
+      .from('apishopee_shops')
+      .select('id, shop_id, shop_name, region, shop_logo')
+      .in('id', shopIds);
+
+    if (shopError) {
+      console.error('[getUserShops] Shop query error:', shopError);
+      return [];
+    }
+
+    // Step 3: Lấy role info (optional)
+    const roleIds = [...new Set(memberData.map(m => m.role_id).filter(Boolean))];
+    let roleMap = new Map<string, { name: string; display_name: string }>();
+
+    if (roleIds.length > 0) {
+      const { data: roleData } = await supabase
+        .from('apishopee_roles')
+        .select('id, name, display_name')
+        .in('id', roleIds);
+
+      if (roleData) {
+        roleData.forEach(r => roleMap.set(r.id, { name: r.name, display_name: r.display_name }));
+      }
+    }
+
+    // Transform and combine data
+    const shopMap = new Map(shopData?.map(s => [s.id, s]) || []);
+
+    return memberData.map(member => {
+      const shop = shopMap.get(member.shop_id);
+      const role = roleMap.get(member.role_id) || { name: 'member', display_name: 'Member' };
+
       return {
-        shop_id: item.shop_id,
-        shop_name: shop?.shop_name || `Shop ${item.shop_id}`,
+        id: shop?.id,
+        shop_id: shop?.shop_id,
+        shop_name: shop?.shop_name || `Shop ${shop?.shop_id}`,
         region: shop?.region || 'VN',
         shop_logo: shop?.shop_logo,
         access_type: 'direct',
-        access_level: item.role,
+        access_level: role.name,
+        role_display_name: role.display_name,
       };
-    });
+    }).filter(item => item.shop_id); // Filter out items without valid shop
   } catch (error) {
     console.error('[getUserShops] Error:', error);
     return [];
   }
 }
 
-// Lấy profile user với role information - tự động tạo nếu chưa có
+// Lấy profile user - theo schema sys_profiles hiện tại
 export async function getUserProfile(userId: string) {
   console.log('[getUserProfile] Loading profile for:', userId);
-  
-  // Query profile with role join in one query
-  const { data: profileWithRole, error: joinError } = await supabase
-    .from('profiles')
-    .select(`
-      *,
-      roles:role_id (
-        name,
-        display_name
-      )
-    `)
-    .eq('id', userId)
-    .single();
 
-  console.log('[getUserProfile] Profile with role join:', { profileWithRole, joinError });
-
-  // Nếu join query thành công
-  if (profileWithRole && !joinError) {
-    const roleInfo = profileWithRole.roles as any;
-    const result = {
-      id: profileWithRole.id,
-      email: profileWithRole.email,
-      full_name: profileWithRole.full_name,
-      avatar_url: profileWithRole.avatar_url,
-      role_id: profileWithRole.role_id,
-      created_at: profileWithRole.created_at,
-      updated_at: profileWithRole.updated_at,
-      role_name: roleInfo?.name || 'member',
-      role_display_name: roleInfo?.display_name || 'Member',
-    };
-    console.log('[getUserProfile] Final result from join:', result);
-    return result;
-  }
-
-  // Fallback: Query profile separately
   const { data: profileData, error: profileError } = await supabase
-    .from('profiles')
+    .from('sys_profiles')
     .select('*')
     .eq('id', userId)
     .single();
@@ -371,24 +380,17 @@ export async function getUserProfile(userId: string) {
     // Nếu không tìm thấy profile, tự động tạo mới
     if (profileError.code === 'PGRST116') {
       console.log('[getUserProfile] Profile not found, creating new one...');
-      
+
       // Lấy thông tin user từ auth
       const { data: { user } } = await supabase.auth.getUser();
-      
-      // Get default member role
-      const { data: memberRole } = await supabase
-        .from('roles')
-        .select('id')
-        .eq('name', 'member')
-        .single();
-      
+
       const { data: newProfile, error: insertError } = await supabase
-        .from('profiles')
+        .from('sys_profiles')
         .insert({
           id: userId,
           email: user?.email || '',
           full_name: user?.user_metadata?.full_name || '',
-          role_id: memberRole?.id,
+          work_type: 'fulltime',
         })
         .select('*')
         .single();
@@ -400,48 +402,20 @@ export async function getUserProfile(userId: string) {
 
       return {
         ...newProfile,
-        role_name: 'member',
-        role_display_name: 'Member',
+        role_display_name: newProfile.work_type === 'fulltime' ? 'Full-time' : 'Part-time',
       };
     }
-    
+
     console.error('[getUserProfile] Error:', profileError);
     return null;
   }
 
-  // Query role separately
-  let roleName = 'member';
-  let roleDisplayName = 'Member';
-  
-  console.log('[getUserProfile] Profile role_id:', profileData.role_id);
-  
-  if (profileData.role_id) {
-    const { data: roleData, error: roleError } = await supabase
-      .from('roles')
-      .select('name, display_name')
-      .eq('id', profileData.role_id)
-      .single();
-    
-    console.log('[getUserProfile] Role query result:', { roleData, roleError });
-    
-    if (roleError) {
-      console.error('[getUserProfile] Role query error:', roleError);
-    }
-    
-    if (roleData) {
-      roleName = roleData.name;
-      roleDisplayName = roleData.display_name;
-    }
-  } else {
-    console.warn('[getUserProfile] No role_id found in profile');
-  }
-
+  // Return profile với computed role_display_name từ work_type
   const result = {
     ...profileData,
-    role_name: roleName,
-    role_display_name: roleDisplayName,
+    role_display_name: profileData.work_type === 'fulltime' ? 'Full-time' : 'Part-time',
   };
-  
+
   console.log('[getUserProfile] Final result:', result);
   return result;
 }

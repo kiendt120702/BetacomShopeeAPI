@@ -27,7 +27,7 @@ interface UseSyncDataOptions {
 export function useSyncData(options: UseSyncDataOptions) {
   const { shopId, userId, autoSyncOnMount = true, syncType = 'all', staleMinutes = 5 } = options;
   const { toast } = useToast();
-  
+
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export function useSyncData(options: UseSyncDataOptions) {
       const results = [];
 
       for (const action of actions) {
-        const { data, error } = await supabase.functions.invoke('shopee-sync-worker', {
+        const { data, error } = await supabase.functions.invoke('apishopee-sync-worker', {
           body: { action, shop_id: shopId, user_id: userId },
         });
 
@@ -139,7 +139,7 @@ export function useSyncData(options: UseSyncDataOptions) {
 
     const checkAndSync = async () => {
       const status = await fetchSyncStatus();
-      
+
       if (!status) {
         // No sync status yet, trigger initial sync
         triggerSync();
@@ -148,7 +148,7 @@ export function useSyncData(options: UseSyncDataOptions) {
 
       // Check if specific data type is stale
       let needsSync = false;
-      
+
       if (syncType === 'all' || syncType === 'campaigns') {
         needsSync = needsSync || isDataStale(status.campaigns_synced_at);
       }

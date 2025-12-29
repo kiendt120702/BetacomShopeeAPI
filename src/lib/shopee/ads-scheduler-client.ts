@@ -57,7 +57,7 @@ export interface UpdateScheduleParams {
 export async function createBudgetSchedule(
   params: CreateScheduleParams
 ): Promise<{ success: boolean; schedule?: ScheduledAdsBudget; error?: string }> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads-scheduler', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads-scheduler', {
     body: {
       action: 'create',
       ...params,
@@ -75,7 +75,7 @@ export async function createBudgetSchedule(
 export async function updateBudgetSchedule(
   params: UpdateScheduleParams
 ): Promise<{ success: boolean; schedule?: ScheduledAdsBudget; error?: string }> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads-scheduler', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads-scheduler', {
     body: {
       action: 'update',
       ...params,
@@ -94,7 +94,7 @@ export async function deleteBudgetSchedule(
   shopId: number,
   scheduleId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads-scheduler', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads-scheduler', {
     body: {
       action: 'delete',
       shop_id: shopId,
@@ -114,7 +114,7 @@ export async function listBudgetSchedules(
   shopId: number,
   campaignId?: number
 ): Promise<{ success: boolean; schedules?: ScheduledAdsBudget[]; error?: string }> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads-scheduler', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads-scheduler', {
     body: {
       action: 'list',
       shop_id: shopId,
@@ -135,7 +135,7 @@ export async function getBudgetLogs(
   campaignId?: number,
   limit = 50
 ): Promise<{ success: boolean; logs?: AdsBudgetLog[]; error?: string }> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads-scheduler', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads-scheduler', {
     body: {
       action: 'logs',
       shop_id: shopId,
@@ -156,7 +156,7 @@ export async function runScheduleNow(
   shopId: number,
   scheduleId: string
 ): Promise<{ success: boolean; error?: string; campaign_id?: number; budget?: number }> {
-  const { data, error } = await supabase.functions.invoke('shopee-ads-scheduler', {
+  const { data, error } = await supabase.functions.invoke('apishopee-ads-scheduler', {
     body: {
       action: 'run-now',
       shop_id: shopId,
@@ -180,7 +180,7 @@ export function formatHourRange(start: number, end: number): string {
 // Helper: Format ngày trong tuần
 export function formatDaysOfWeek(days?: number[] | null): string {
   if (!days || days.length === 0 || days.length === 7) return 'Hàng ngày';
-  
+
   const dayNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
   return days.map(d => dayNames[d]).join(', ');
 }
