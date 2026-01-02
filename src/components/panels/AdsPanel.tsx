@@ -453,7 +453,7 @@ export default function AdsPanel() {
     setSelectedDates([]);
     
     // Insert in background
-    supabase.from('apishopee_scheduled_ads_budget').insert(records)
+    Promise.resolve(supabase.from('apishopee_scheduled_ads_budget').insert(records))
       .then(({ error }) => {
         if (error) {
           toast({ title: 'Lỗi', description: error.message, variant: 'destructive' });
