@@ -244,9 +244,13 @@ export async function saveUserShop(
     updated_at: new Date().toISOString(),
   };
 
-  // Thêm partner info nếu có (lưu vào partner_accounts và link)
-  // Note: Hiện tại schema không có partner columns trong shops table
-  // Nếu cần, bạn có thể thêm migration để add columns
+  // Thêm partner info nếu có
+  if (partnerInfo) {
+    shopData.partner_id = partnerInfo.partner_id;
+    shopData.partner_key = partnerInfo.partner_key;
+    shopData.partner_name = partnerInfo.partner_name;
+    shopData.partner_created_by = userId;
+  }
 
   const { data: upsertedShop, error: shopError } = await supabase
     .from('apishopee_shops')
@@ -260,37 +264,51 @@ export async function saveUserShop(
     console.error('[saveUserShop] Shop error:', shopError);
     throw shopError;
   }
+  
+  if (!upsertedShop?.id) {
+    console.error('[saveUserShop] No shop ID returned from upsert');
+    throw new Error('Failed to get shop ID after upsert');
+  }
+  
   console.log('[saveUserShop] apishopee_shops upserted:', upsertedShop);
 
   // 2. Get admin role
-  const { data: adminRole } = await supabase
+  const { data: adminRole, error: roleError } = await supabase
     .from('apishopee_roles')
     .select('id')
     .eq('name', 'admin')
     .single();
 
-  if (!adminRole) {
-    console.error('[saveUserShop] Admin role not found');
+  if (roleError || !adminRole) {
+    console.error('[saveUserShop] Admin role error:', roleError);
     throw new Error('Admin role not found');
   }
+  
+  console.log('[saveUserShop] Admin role found:', adminRole.id);
 
   // 3. Tạo shop member relationship
-  const { error: memberError } = await supabase
+  const memberData = {
+    shop_id: upsertedShop.id, // UUID internal ID
+    profile_id: userId,
+    role_id: adminRole.id,
+    is_active: true,
+  };
+  
+  console.log('[saveUserShop] Creating shop member with data:', memberData);
+  
+  const { data: memberResult, error: memberError } = await supabase
     .from('apishopee_shop_members')
-    .upsert({
-      shop_id: upsertedShop.id, // UUID internal ID
-      profile_id: userId,
-      role_id: adminRole.id,
-      is_active: true,
-    }, {
+    .upsert(memberData, {
       onConflict: 'shop_id,profile_id',
-    });
+    })
+    .select('id')
+    .single();
 
   if (memberError) {
     console.error('[saveUserShop] Shop member error:', memberError);
     throw memberError;
   }
-  console.log('[saveUserShop] apishopee_shop_members upserted successfully');
+  console.log('[saveUserShop] apishopee_shop_members upserted successfully:', memberResult);
 }
 
 // Lấy thông tin shop của user thông qua shop_members
