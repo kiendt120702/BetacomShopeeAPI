@@ -233,44 +233,92 @@ export async function saveUserShop(
 ) {
   console.log('[saveUserShop] Starting...', { userId, shopeeShopId, partnerInfo });
 
-  // 1. Upsert vào bảng apishopee_shops
-  const shopData: Record<string, unknown> = {
-    shop_id: shopeeShopId,
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    expired_at: expiredAt,
-    merchant_id: merchantId,
-    token_updated_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  // Thêm partner info nếu có
-  if (partnerInfo) {
-    shopData.partner_id = partnerInfo.partner_id;
-    shopData.partner_key = partnerInfo.partner_key;
-    shopData.partner_name = partnerInfo.partner_name;
-    shopData.partner_created_by = userId;
-  }
-
-  const { data: upsertedShop, error: shopError } = await supabase
+  // 1. Kiểm tra shop đã tồn tại chưa
+  const { data: existingShop } = await supabase
     .from('apishopee_shops')
-    .upsert(shopData, {
-      onConflict: 'shop_id',
-    })
     .select('id')
+    .eq('shop_id', shopeeShopId)
     .single();
 
-  if (shopError) {
-    console.error('[saveUserShop] Shop error:', shopError);
-    throw shopError;
+  let shopInternalId: string;
+
+  if (existingShop) {
+    // Shop đã tồn tại - chỉ update token và partner info
+    console.log('[saveUserShop] Shop exists, updating token...', existingShop.id);
+    
+    const updateData: Record<string, unknown> = {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expired_at: expiredAt,
+      merchant_id: merchantId,
+      token_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Thêm partner info nếu có
+    if (partnerInfo) {
+      updateData.partner_id = partnerInfo.partner_id;
+      updateData.partner_key = partnerInfo.partner_key;
+      updateData.partner_name = partnerInfo.partner_name;
+      updateData.partner_created_by = userId;
+    }
+
+    const { error: updateError } = await supabase
+      .from('apishopee_shops')
+      .update(updateData)
+      .eq('id', existingShop.id);
+
+    if (updateError) {
+      console.error('[saveUserShop] Update error:', updateError);
+      // Nếu lỗi 403, có thể user chưa có quyền - bỏ qua và tiếp tục tạo member
+      if (updateError.code !== '42501' && updateError.code !== 'PGRST301') {
+        throw updateError;
+      }
+      console.warn('[saveUserShop] Update failed (permission denied), continuing with member creation...');
+    }
+
+    shopInternalId = existingShop.id;
+  } else {
+    // Shop chưa tồn tại - tạo mới
+    console.log('[saveUserShop] Creating new shop...');
+    
+    const shopData: Record<string, unknown> = {
+      shop_id: shopeeShopId,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expired_at: expiredAt,
+      merchant_id: merchantId,
+      token_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Thêm partner info nếu có
+    if (partnerInfo) {
+      shopData.partner_id = partnerInfo.partner_id;
+      shopData.partner_key = partnerInfo.partner_key;
+      shopData.partner_name = partnerInfo.partner_name;
+      shopData.partner_created_by = userId;
+    }
+
+    const { data: newShop, error: insertError } = await supabase
+      .from('apishopee_shops')
+      .insert(shopData)
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('[saveUserShop] Insert error:', insertError);
+      throw insertError;
+    }
+
+    if (!newShop?.id) {
+      console.error('[saveUserShop] No shop ID returned from insert');
+      throw new Error('Failed to get shop ID after insert');
+    }
+
+    shopInternalId = newShop.id;
+    console.log('[saveUserShop] Shop created:', shopInternalId);
   }
-  
-  if (!upsertedShop?.id) {
-    console.error('[saveUserShop] No shop ID returned from upsert');
-    throw new Error('Failed to get shop ID after upsert');
-  }
-  
-  console.log('[saveUserShop] apishopee_shops upserted:', upsertedShop);
 
   // 2. Get admin role
   const { data: adminRole, error: roleError } = await supabase
@@ -288,7 +336,7 @@ export async function saveUserShop(
 
   // 3. Tạo shop member relationship
   const memberData = {
-    shop_id: upsertedShop.id, // UUID internal ID
+    shop_id: shopInternalId, // UUID internal ID
     profile_id: userId,
     role_id: adminRole.id,
     is_active: true,
