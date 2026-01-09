@@ -30,7 +30,8 @@ export default function AuthCallback() {
 
       try {
         await handleCallback(code, shopId ? Number(shopId) : undefined);
-        navigate('/dashboard', { replace: true });
+        // Redirect to shops settings page and reload to show new shop
+        window.location.href = '/settings/shops';
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Authentication failed');
       }
