@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
@@ -46,10 +47,12 @@ interface ShopWithRole extends Shop {
 export function ShopManagementPanel() {
   const { toast } = useToast();
   const { user, login, isLoading: isAuthLoading } = useShopeeAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [shops, setShops] = useState<ShopWithRole[]>([]);
   const [refreshingShop, setRefreshingShop] = useState<number | null>(null);
   const [reconnectingShop, setReconnectingShop] = useState<number | null>(null);
+  const hasLoadedRef = useRef(false);
 
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -123,10 +126,26 @@ export function ShopManagementPanel() {
     }
   };
 
+  // Check for refresh param from OAuth callback
+  useEffect(() => {
+    const refreshParam = searchParams.get('refresh');
+    if (refreshParam) {
+      // Clear the param from URL
+      searchParams.delete('refresh');
+      setSearchParams(searchParams, { replace: true });
+      // Reset loaded flag to force reload
+      hasLoadedRef.current = false;
+    }
+  }, [searchParams, setSearchParams]);
+
   useEffect(() => {
     // Chờ auth loading xong mới query
     if (!isAuthLoading && user?.id) {
-      loadShops();
+      // Only load if not already loaded (unless refresh param was set)
+      if (!hasLoadedRef.current) {
+        hasLoadedRef.current = true;
+        loadShops();
+      }
     } else if (!isAuthLoading && !user?.id) {
       // Auth xong nhưng không có user -> không loading nữa
       setLoading(false);

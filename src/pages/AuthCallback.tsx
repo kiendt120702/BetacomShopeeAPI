@@ -30,8 +30,8 @@ export default function AuthCallback() {
 
       try {
         await handleCallback(code, shopId ? Number(shopId) : undefined);
-        // Redirect to shops settings page and reload to show new shop
-        window.location.href = '/settings/shops';
+        // Redirect to shops settings page with timestamp to force refresh
+        window.location.href = '/settings/shops?refresh=' + Date.now();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Authentication failed');
       }
