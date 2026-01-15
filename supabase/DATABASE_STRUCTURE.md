@@ -159,4 +159,4 @@ apishopee_token_refresh_logs
 ## Migrations
 
 Tất cả migrations được lưu trong `supabase/migrations/`
-- Migration cuối cùng: `038_cleanup_unused_tables_final.sql`
+- Migration cuối cùng: `041_drop_campaigns_tables.sql`

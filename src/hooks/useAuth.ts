@@ -180,7 +180,6 @@ export async function getUserProfile(userId: string) {
           id: userId,
           email: user?.email || '',
           full_name: user?.user_metadata?.full_name || '',
-          work_type: 'fulltime',
         })
         .select('*')
         .single();
@@ -189,7 +188,7 @@ export async function getUserProfile(userId: string) {
 
       return {
         ...newProfile,
-        role_display_name: newProfile.work_type === 'fulltime' ? 'Full-time' : 'Part-time',
+        role_display_name: 'User',
       };
     }
 
@@ -198,6 +197,6 @@ export async function getUserProfile(userId: string) {
 
   return {
     ...profileData,
-    role_display_name: profileData.work_type === 'fulltime' ? 'Full-time' : 'Part-time',
+    role_display_name: profileData.system_role === 'admin' ? 'Admin' : 'User',
   };
 }

@@ -92,6 +92,8 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
   const [shops, setShops] = useState<ShopWithRole[]>([]);
   const [refreshingShop, setRefreshingShop] = useState<number | null>(null);
   const [reconnectingShop, setReconnectingShop] = useState<number | null>(null);
+  const [refreshingToken, setRefreshingToken] = useState<number | null>(null);
+  const [refreshingAllTokens, setRefreshingAllTokens] = useState(false);
   const hasLoadedRef = useRef(false);
 
   // Kiểm tra user hiện tại có phải admin không
@@ -120,11 +122,12 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
   const [allRoles, setAllRoles] = useState<Role[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
+  const [selectedShopIds, setSelectedShopIds] = useState<string[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
   const [addingMembers, setAddingMembers] = useState(false);
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-
+  const [allShopMembers, setAllShopMembers] = useState<Record<string, ShopMember[]>>({});
   const loadShops = useCallback(async (userId?: string) => {
     // Sử dụng userId được truyền vào, hoặc fallback về user?.id
     const effectiveUserId = userId || user?.id;
@@ -383,6 +386,97 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
     }
   };
 
+  // Refresh token cho shop bằng edge function
+  const handleRefreshToken = async (shop: ShopWithRole) => {
+    setRefreshingToken(shop.shop_id);
+    try {
+      const { data, error } = await supabase.functions.invoke('shopee-token-refresh', {
+        body: { shop_id: shop.shop_id },
+      });
+
+      if (error) throw error;
+
+      if (data?.success && data?.results?.[0]?.status === 'success') {
+        // Cập nhật shop trong state với thời gian hết hạn mới
+        const result = data.results[0];
+        const newExpiry = result.new_expiry ? new Date(result.new_expiry).getTime() : null;
+        
+        setShops(prev => prev.map(s =>
+          s.shop_id === shop.shop_id ? {
+            ...s,
+            expired_at: newExpiry,
+            access_token_expired_at: newExpiry,
+            token_updated_at: new Date().toISOString(),
+          } : s
+        ));
+
+        toast({
+          title: 'Thành công',
+          description: `Đã refresh token cho ${shop.shop_name || shop.shop_id}`,
+        });
+      } else {
+        const errorMsg = data?.results?.[0]?.error || data?.error || 'Không thể refresh token';
+        throw new Error(errorMsg);
+      }
+    } catch (err) {
+      toast({
+        title: 'Lỗi refresh token',
+        description: (err as Error).message,
+        variant: 'destructive',
+      });
+    } finally {
+      setRefreshingToken(null);
+    }
+  };
+
+  // Refresh token cho tất cả shops
+  const handleRefreshAllTokens = async () => {
+    setRefreshingAllTokens(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('shopee-token-refresh', {
+        body: {}, // Không truyền shop_id để refresh tất cả
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        // Cập nhật tất cả shops thành công
+        const successResults = (data.results || []).filter((r: { status: string }) => r.status === 'success');
+        
+        if (successResults.length > 0) {
+          setShops(prev => prev.map(s => {
+            const result = successResults.find((r: { shop_id: number }) => r.shop_id === s.shop_id);
+            if (result?.new_expiry) {
+              const newExpiry = new Date(result.new_expiry).getTime();
+              return {
+                ...s,
+                expired_at: newExpiry,
+                access_token_expired_at: newExpiry,
+                token_updated_at: new Date().toISOString(),
+              };
+            }
+            return s;
+          }));
+        }
+
+        toast({
+          title: 'Hoàn tất',
+          description: `${data.success_count || 0} thành công, ${data.failed_count || 0} thất bại`,
+        });
+      } else {
+        throw new Error(data?.error || 'Không thể refresh tokens');
+      }
+    } catch (err) {
+      toast({
+        title: 'Lỗi',
+        description: (err as Error).message,
+        variant: 'destructive',
+      });
+    } finally {
+      setRefreshingAllTokens(false);
+    }
+  };
+
   const handleDeleteShop = async () => {
     if (!shopToDelete) return;
 
@@ -469,26 +563,26 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
     }
   };
 
-  // Load members của shop
-  const handleOpenMembersDialog = async (shop: ShopWithRole) => {
-    setSelectedShopForMembers(shop);
+  // Mở dialog phân quyền - load tất cả data
+  const handleOpenMembersDialog = async (shop?: ShopWithRole) => {
     setMembersDialogOpen(true);
     setLoadingMembers(true);
     setSelectedProfileIds([]);
+    setSelectedShopIds(shop ? [shop.id] : []);
     setSelectedRoleId('');
     setSearchQuery('');
+    setSelectedShopForMembers(shop || null);
 
     try {
-      // Load members, profiles, roles in parallel
+      // Load all members for all shops, profiles, roles in parallel
       const [membersRes, profilesRes, rolesRes] = await Promise.all([
         supabase
           .from('apishopee_shop_members')
           .select(`
-            id, profile_id, role_id,
+            id, shop_id, profile_id, role_id,
             sys_profiles(id, email, full_name),
             apishopee_roles(id, name, display_name)
           `)
-          .eq('shop_id', shop.id)
           .eq('is_active', true),
         supabase.from('sys_profiles').select('id, email, full_name').order('full_name'),
         supabase.from('apishopee_roles').select('id, name, display_name').order('name'),
@@ -498,15 +592,31 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
       if (profilesRes.error) throw profilesRes.error;
       if (rolesRes.error) throw rolesRes.error;
 
-      const members: ShopMember[] = (membersRes.data || []).map((m) => ({
-        id: m.id,
-        profile_id: m.profile_id,
-        role_id: m.role_id,
-        profile: m.sys_profiles as unknown as Profile,
-        role: m.apishopee_roles as unknown as Role,
-      }));
+      // Group members by shop_id
+      const membersByShop: Record<string, ShopMember[]> = {};
+      (membersRes.data || []).forEach((m) => {
+        const member: ShopMember = {
+          id: m.id,
+          profile_id: m.profile_id,
+          role_id: m.role_id,
+          profile: m.sys_profiles as unknown as Profile,
+          role: m.apishopee_roles as unknown as Role,
+        };
+        if (!membersByShop[m.shop_id]) {
+          membersByShop[m.shop_id] = [];
+        }
+        membersByShop[m.shop_id].push(member);
+      });
 
-      setShopMembers(members);
+      setAllShopMembers(membersByShop);
+      
+      // Set shopMembers for selected shop
+      if (shop) {
+        setShopMembers(membersByShop[shop.id] || []);
+      } else {
+        setShopMembers([]);
+      }
+
       setAllProfiles(profilesRes.data || []);
       setAllRoles(rolesRes.data || []);
 
@@ -525,25 +635,28 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
     }
   };
 
-  // Thêm nhiều members
+  // Chọn shop trong dialog
+  const handleSelectShopInDialog = (shopId: string) => {
+    const shop = shops.find(s => s.id === shopId);
+    setSelectedShopForMembers(shop || null);
+    setShopMembers(allShopMembers[shopId] || []);
+  };
+
+  // Toggle chọn shop
+  const toggleShopSelection = (shopId: string) => {
+    setSelectedShopIds(prev =>
+      prev.includes(shopId)
+        ? prev.filter(id => id !== shopId)
+        : [...prev, shopId]
+    );
+  };
+
+  // Thêm nhiều members vào nhiều shops
   const handleAddMembers = async () => {
-    if (!selectedShopForMembers || selectedProfileIds.length === 0 || !selectedRoleId) {
+    if (selectedShopIds.length === 0 || selectedProfileIds.length === 0 || !selectedRoleId) {
       toast({
         title: 'Lỗi',
-        description: 'Vui lòng chọn ít nhất một nhân viên và vai trò',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    // Filter out profiles that are already members
-    const existingProfileIds = shopMembers.map(m => m.profile_id);
-    const newProfileIds = selectedProfileIds.filter(id => !existingProfileIds.includes(id));
-
-    if (newProfileIds.length === 0) {
-      toast({
-        title: 'Thông báo',
-        description: 'Tất cả nhân viên đã chọn đều đã có quyền truy cập shop này',
+        description: 'Vui lòng chọn ít nhất một shop, một nhân viên và vai trò',
         variant: 'destructive',
       });
       return;
@@ -551,38 +664,74 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
 
     setAddingMembers(true);
     try {
-      const insertData = newProfileIds.map(profileId => ({
-        shop_id: selectedShopForMembers.id,
-        profile_id: profileId,
-        role_id: selectedRoleId,
-        is_active: true,
-      }));
+      // Tạo danh sách insert cho tất cả combinations của shop và profile
+      const insertData: { shop_id: string; profile_id: string; role_id: string; is_active: boolean }[] = [];
+      
+      for (const shopId of selectedShopIds) {
+        const existingMembers = allShopMembers[shopId] || [];
+        const existingProfileIds = existingMembers.map(m => m.profile_id);
+        
+        for (const profileId of selectedProfileIds) {
+          // Chỉ thêm nếu chưa là member
+          if (!existingProfileIds.includes(profileId)) {
+            insertData.push({
+              shop_id: shopId,
+              profile_id: profileId,
+              role_id: selectedRoleId,
+              is_active: true,
+            });
+          }
+        }
+      }
+
+      if (insertData.length === 0) {
+        toast({
+          title: 'Thông báo',
+          description: 'Tất cả nhân viên đã chọn đều đã có quyền truy cập các shop đã chọn',
+        });
+        setAddingMembers(false);
+        return;
+      }
 
       const { data, error } = await supabase
         .from('apishopee_shop_members')
         .insert(insertData)
         .select(`
-          id, profile_id, role_id,
+          id, shop_id, profile_id, role_id,
           sys_profiles(id, email, full_name),
           apishopee_roles(id, name, display_name)
         `);
 
       if (error) throw error;
 
-      const newMembers: ShopMember[] = (data || []).map((m) => ({
-        id: m.id,
-        profile_id: m.profile_id,
-        role_id: m.role_id,
-        profile: m.sys_profiles as unknown as Profile,
-        role: m.apishopee_roles as unknown as Role,
-      }));
+      // Update allShopMembers state
+      const newMembersByShop: Record<string, ShopMember[]> = { ...allShopMembers };
+      (data || []).forEach((m) => {
+        const member: ShopMember = {
+          id: m.id,
+          profile_id: m.profile_id,
+          role_id: m.role_id,
+          profile: m.sys_profiles as unknown as Profile,
+          role: m.apishopee_roles as unknown as Role,
+        };
+        if (!newMembersByShop[m.shop_id]) {
+          newMembersByShop[m.shop_id] = [];
+        }
+        newMembersByShop[m.shop_id].push(member);
+      });
+      setAllShopMembers(newMembersByShop);
 
-      setShopMembers(prev => [...prev, ...newMembers]);
+      // Update shopMembers for current selected shop
+      if (selectedShopForMembers) {
+        setShopMembers(newMembersByShop[selectedShopForMembers.id] || []);
+      }
+
       setSelectedProfileIds([]);
+      setSelectedShopIds([]);
 
       toast({
         title: 'Thành công',
-        description: `Đã thêm ${newMembers.length} thành viên`,
+        description: `Đã thêm ${data?.length || 0} quyền truy cập`,
       });
     } catch (err) {
       console.error('Error adding members:', err);
@@ -597,7 +746,7 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
   };
 
   // Xóa member
-  const handleDeleteMember = async (memberId: string) => {
+  const handleDeleteMember = async (memberId: string, shopId: string) => {
     setDeletingMemberId(memberId);
     try {
       const { error } = await supabase
@@ -607,6 +756,13 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
 
       if (error) throw error;
 
+      // Update allShopMembers
+      setAllShopMembers(prev => ({
+        ...prev,
+        [shopId]: (prev[shopId] || []).filter(m => m.id !== memberId),
+      }));
+
+      // Update shopMembers for current view
       setShopMembers(prev => prev.filter(m => m.id !== memberId));
       toast({ title: 'Thành công', description: 'Đã xóa quyền truy cập' });
     } catch (err) {
@@ -701,17 +857,11 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
         <CellShopInfo
           logo={shop.shop_logo}
           name={shop.shop_name || `Shop ${shop.shop_id}`}
+          shopId={shop.shop_id}
           region={shop.region || 'VN'}
           onRefresh={readOnly ? undefined : () => handleRefreshShopName(shop.shop_id)}
           refreshing={refreshingShop === shop.shop_id}
         />
-      ),
-    },
-    {
-      key: 'shop_id',
-      header: 'ID',
-      render: (shop: ShopWithRole) => (
-        <CellText mono>{shop.shop_id}</CellText>
       ),
     },
     {
@@ -749,64 +899,62 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
         );
       },
     },
-    // Chỉ hiển thị cột Thao tác khi không phải readOnly
-    ...(!readOnly ? [{
+    // Chỉ hiển thị cột Thao tác khi không phải readOnly và là admin
+    ...(!readOnly && isSystemAdmin ? [{
       key: 'actions',
       header: 'Thao tác',
       render: (shop: ShopWithRole) => (
         <CellActions>
-          {/* Chỉ admin mới được phân quyền */}
-          {isSystemAdmin && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 h-7 text-xs px-2"
-              onClick={(e) => { e.stopPropagation(); handleOpenMembersDialog(shop); }}
-            >
-              <Users className="w-3.5 h-3.5 mr-1" />
-              Phân quyền
-            </Button>
-          )}
-          {/* Chỉ admin mới được kết nối lại shop */}
-          {isSystemAdmin && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-slate-600 hover:text-slate-800 h-7 text-xs px-2"
-              onClick={(e) => { e.stopPropagation(); handleReconnectShop(shop); }}
-              disabled={reconnectingShop === shop.shop_id}
-            >
-              {reconnectingShop === shop.shop_id ? (
-                <Spinner size="sm" />
-              ) : (
-                <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              )}
-              Kết nối lại
-            </Button>
-          )}
-          {/* Chỉ admin mới được xóa shop */}
-          {isSystemAdmin && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-red-500 hover:text-red-600 hover:bg-red-50 h-7 w-7 p-0"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShopToDelete(shop);
-                setDeleteDialogOpen(true);
-              }}
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          {/* Refresh Token */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 h-7 w-7 p-0"
+            onClick={(e) => { e.stopPropagation(); handleRefreshToken(shop); }}
+            disabled={refreshingToken === shop.shop_id}
+            title="Refresh access token"
+          >
+            {refreshingToken === shop.shop_id ? (
+              <Spinner size="sm" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-            </Button>
-          )}
-          {/* User thường chỉ xem, không có action */}
-          {!isSystemAdmin && (
-            <span className="text-slate-400 text-sm">-</span>
-          )}
+            )}
+          </Button>
+          {/* Kết nối lại shop */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-600 hover:text-slate-800 hover:bg-slate-100 h-7 w-7 p-0"
+            onClick={(e) => { e.stopPropagation(); handleReconnectShop(shop); }}
+            disabled={reconnectingShop === shop.shop_id}
+            title="Kết nối lại (re-authorize)"
+          >
+            {reconnectingShop === shop.shop_id ? (
+              <Spinner size="sm" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+            )}
+          </Button>
+          {/* Xóa shop */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-red-500 hover:text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShopToDelete(shop);
+              setDeleteDialogOpen(true);
+            }}
+            title="Xóa shop"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </Button>
         </CellActions>
       ),
     }] : []),
@@ -819,12 +967,18 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
           <CardTitle className="flex items-center justify-between">
             <span>Shop có quyền truy cập</span>
             {!readOnly && isSystemAdmin && (
-              <Button className="bg-orange-500 hover:bg-orange-600" disabled>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Kết nối Shop
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" className="text-blue-600" disabled>
+                  <Users className="w-4 h-4 mr-2" />
+                  Phân quyền
+                </Button>
+                <Button className="bg-orange-500 hover:bg-orange-600" disabled>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Kết nối Shop
+                </Button>
+              </div>
             )}
           </CardTitle>
         </CardHeader>
@@ -853,15 +1007,40 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
           <CardTitle className="flex items-center justify-between">
             <span>Shop có quyền truy cập ({shops.length})</span>
             {!readOnly && isSystemAdmin && (
-              <Button
-                className="bg-orange-500 hover:bg-orange-600"
-                onClick={handleConnectNewShop}
-              >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Kết nối Shop
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  className="text-green-600 hover:text-green-800 hover:bg-green-50"
+                  onClick={handleRefreshAllTokens}
+                  disabled={refreshingAllTokens || shops.length === 0}
+                >
+                  {refreshingAllTokens ? (
+                    <Spinner size="sm" className="mr-2" />
+                  ) : (
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  )}
+                  Refresh All
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                  onClick={() => handleOpenMembersDialog()}
+                >
+                  <Users className="w-4 h-4 mr-2" />
+                  Phân quyền
+                </Button>
+                <Button
+                  className="bg-orange-500 hover:bg-orange-600"
+                  onClick={handleConnectNewShop}
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Kết nối Shop
+                </Button>
+              </div>
             )}
           </CardTitle>
         </CardHeader>
@@ -969,16 +1148,16 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
         </DialogContent>
       </Dialog>
 
-      {/* Members Dialog - Phân quyền shop */}
+      {/* Members Dialog - Phân quyền shop - 3 columns layout */}
       <Dialog open={membersDialogOpen} onOpenChange={setMembersDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh]">
+        <DialogContent className="sm:max-w-[1000px] max-h-[85vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
               Phân quyền Shop
             </DialogTitle>
             <DialogDescription>
-              {selectedShopForMembers?.shop_name || `Shop ${selectedShopForMembers?.shop_id}`}
+              Chọn shop ở cột giữa để xem và quản lý thành viên
             </DialogDescription>
           </DialogHeader>
 
@@ -987,28 +1166,144 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
               <Spinner size="lg" />
             </div>
           ) : (
-            <div className="space-y-4">
-              {/* Danh sách thành viên hiện tại */}
-              <div>
-                <Label className="text-sm font-medium">Thành viên hiện tại ({shopMembers.length})</Label>
-                <ScrollArea className="h-[150px] mt-2 border rounded-lg">
-                  {shopMembers.length === 0 ? (
-                    <p className="text-sm text-slate-400 p-4 text-center">Chưa có thành viên nào</p>
-                  ) : (
-                    <div className="p-2 space-y-1">
+            <div className="grid grid-cols-3 gap-4 py-4">
+              {/* Left column - Available profiles to add */}
+              <div className="border rounded-lg p-3 flex flex-col h-[450px]">
+                <h4 className="text-sm font-medium mb-2">Nhân viên</h4>
+                <Input
+                  placeholder="Tìm kiếm..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="mb-2 h-8 text-sm"
+                />
+                <ScrollArea className="flex-1 h-[280px]">
+                  <div className="space-y-1 pr-2">
+                    {availableProfiles.length === 0 ? (
+                      <p className="text-xs text-slate-500 text-center py-4">
+                        {searchQuery ? 'Không tìm thấy' : 'Tất cả đã có quyền'}
+                      </p>
+                    ) : (
+                      availableProfiles.map((profile) => (
+                        <div
+                          key={profile.id}
+                          className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer"
+                          onClick={() => toggleProfileSelection(profile.id)}
+                        >
+                          <Checkbox
+                            checked={selectedProfileIds.includes(profile.id)}
+                            onCheckedChange={() => toggleProfileSelection(profile.id)}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {profile.full_name || profile.email}
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">{profile.email}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+                
+                {/* Role selection and Add button */}
+                <div className="border-t pt-2 mt-2 space-y-2">
+                  <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Chọn vai trò" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allRoles.map((role) => (
+                        <SelectItem key={role.id} value={role.id}>
+                          {role.display_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    className="w-full bg-orange-500 hover:bg-orange-600 h-8 text-sm"
+                    onClick={handleAddMembers}
+                    disabled={addingMembers || selectedProfileIds.length === 0 || selectedShopIds.length === 0 || !selectedRoleId}
+                  >
+                    {addingMembers ? <Spinner size="sm" className="mr-2" /> : null}
+                    Thêm ({selectedProfileIds.length} NV → {selectedShopIds.length} Shop)
+                  </Button>
+                </div>
+              </div>
+
+              {/* Middle column - Shop list */}
+              <div className="border rounded-lg p-3 flex flex-col h-[450px]">
+                <h4 className="text-sm font-medium mb-2">Danh sách Shop ({selectedShopIds.length} đã chọn)</h4>
+                <ScrollArea className="flex-1 h-[400px]">
+                  <div className="space-y-1 pr-2">
+                    {shops.map((shop) => (
+                      <div
+                        key={shop.id}
+                        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                          selectedShopForMembers?.id === shop.id
+                            ? 'bg-orange-100 border border-orange-300'
+                            : selectedShopIds.includes(shop.id)
+                            ? 'bg-blue-50'
+                            : 'hover:bg-slate-50'
+                        }`}
+                        onClick={() => handleSelectShopInDialog(shop.id)}
+                      >
+                        <Checkbox
+                          checked={selectedShopIds.includes(shop.id)}
+                          onCheckedChange={() => toggleShopSelection(shop.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {shop.shop_logo ? (
+                            <img src={shop.shop_logo} alt={shop.shop_name || ''} className="w-full h-full object-cover" />
+                          ) : (
+                            <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {shop.shop_name || `Shop ${shop.shop_id}`}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {shop.region || 'VN'} - <span className="font-mono">{shop.shop_id}</span>
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {/* Right column - Current members of selected shop */}
+              <div className="border rounded-lg p-3 flex flex-col h-[450px] overflow-hidden">
+                <h4 className="text-sm font-medium mb-2">
+                  Thành viên {selectedShopForMembers ? `(${shopMembers.length})` : ''}
+                </h4>
+                {!selectedShopForMembers ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-sm text-slate-500">Click vào shop để xem thành viên</p>
+                  </div>
+                ) : shopMembers.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-sm text-slate-500">Chưa có thành viên</p>
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="space-y-1">
                       {shopMembers.map((member) => (
                         <div
                           key={member.id}
-                          className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"
+                          className="flex items-center justify-between p-2 bg-slate-50 rounded gap-2"
                         >
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-800 truncate">
+                            <p className="text-sm font-medium truncate">
                               {member.profile?.full_name || member.profile?.email}
                             </p>
-                            <p className="text-xs text-slate-400 truncate">{member.profile?.email}</p>
+                            <p className="text-xs text-slate-500 truncate">{member.profile?.email}</p>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
                               member.role?.name === 'admin' 
                                 ? 'bg-green-100 text-green-700' 
                                 : 'bg-slate-100 text-slate-600'
@@ -1018,98 +1313,22 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
-                              onClick={() => handleDeleteMember(member.id)}
+                              className="text-red-500 hover:text-red-600 h-6 w-6 p-0 flex-shrink-0"
+                              onClick={() => handleDeleteMember(member.id, selectedShopForMembers!.id)}
                               disabled={deletingMemberId === member.id}
                             >
                               {deletingMemberId === member.id ? (
                                 <Spinner size="sm" />
                               ) : (
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3 h-3" />
                               )}
                             </Button>
                           </div>
                         </div>
                       ))}
                     </div>
-                  )}
-                </ScrollArea>
-              </div>
-
-              {/* Thêm thành viên mới */}
-              <div className="border-t pt-4">
-                <Label className="text-sm font-medium">Thêm thành viên mới</Label>
-                
-                <div className="mt-2 space-y-3">
-                  {/* Search */}
-                  <Input
-                    placeholder="Tìm kiếm nhân viên..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-
-                  {/* Danh sách nhân viên có thể thêm */}
-                  <ScrollArea className="h-[180px] border rounded-lg">
-                    {availableProfiles.length === 0 ? (
-                      <p className="text-sm text-slate-400 p-4 text-center">
-                        {searchQuery ? 'Không tìm thấy nhân viên' : 'Tất cả nhân viên đã có quyền truy cập'}
-                      </p>
-                    ) : (
-                      <div className="p-2 space-y-1">
-                        {availableProfiles.map((profile) => (
-                          <label
-                            key={profile.id}
-                            className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer"
-                          >
-                            <Checkbox
-                              checked={selectedProfileIds.includes(profile.id)}
-                              onCheckedChange={() => toggleProfileSelection(profile.id)}
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-800 truncate">
-                                {profile.full_name || profile.email}
-                              </p>
-                              {profile.full_name && (
-                                <p className="text-xs text-slate-400 truncate">{profile.email}</p>
-                              )}
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </ScrollArea>
-
-                  {/* Chọn vai trò */}
-                  <div className="flex items-center gap-3">
-                    <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Chọn vai trò" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {allRoles.map((role) => (
-                          <SelectItem key={role.id} value={role.id}>
-                            {role.display_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-
-                    <Button
-                      className="bg-orange-500 hover:bg-orange-600"
-                      onClick={handleAddMembers}
-                      disabled={addingMembers || selectedProfileIds.length === 0 || !selectedRoleId}
-                    >
-                      {addingMembers ? (
-                        <>
-                          <Spinner size="sm" className="mr-2" />
-                          Đang thêm...
-                        </>
-                      ) : (
-                        <>Thêm {selectedProfileIds.length > 0 ? `(${selectedProfileIds.length})` : ''}</>
-                      )}
-                    </Button>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           )}

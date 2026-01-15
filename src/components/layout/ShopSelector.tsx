@@ -3,12 +3,14 @@
  */
 
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useShopeeAuth } from '@/hooks/useShopeeAuth';
 import { Check, ChevronDown, Store, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function ShopSelector() {
   const { shops, selectedShopId, switchShop, isLoading } = useShopeeAuth();
+  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
 
@@ -30,10 +32,16 @@ export default function ShopSelector() {
       await switchShop(shopId);
       // Lưu shop đã chọn vào localStorage
       localStorage.setItem('selected_shop_id', shopId.toString());
-      // Reload trang để refresh toàn bộ data
-      window.location.reload();
+      
+      // Invalidate all queries để refetch data cho shop mới
+      // Không cần reload trang - React Query sẽ tự động refetch
+      await queryClient.invalidateQueries({ queryKey: ['realtime'] });
+      await queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
+      
+      setIsOpen(false);
     } catch (error) {
       console.error('Failed to switch shop:', error);
+    } finally {
       setIsSwitching(false);
     }
   };

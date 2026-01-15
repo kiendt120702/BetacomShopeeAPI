@@ -6,14 +6,16 @@ import { useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import Sidebar from './Sidebar';
+import Breadcrumb from './Breadcrumb';
 import { cn } from '@/lib/utils';
 
 export default function MainLayout() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, session } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Show loading while checking auth
-  if (isLoading) {
+  // Show loading while checking auth (but only briefly during initial load)
+  // If we have a session, don't show loading - let the page render
+  if (isLoading && !session) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
@@ -44,9 +46,10 @@ export default function MainLayout() {
           sidebarCollapsed ? 'pl-16' : 'pl-64'
         )}
       >
-        <div className="p-6">
-          <Outlet />
-        </div>
+        {/* Breadcrumb Header */}
+        <Breadcrumb />
+        
+        <Outlet />
       </main>
     </div>
   );

@@ -39,12 +39,13 @@ export {
 } from './storage';
 export type { TokenStorage } from './storage';
 
-// Ads Client - Removed (not used)
 // Flash Sale Client - Removed (not used)
-// Ads Budget Scheduler Client - Removed (not used)
 
 // Types
 export type {
   AccessToken,
   RefreshedAccessToken,
 } from './types';
+
+// Ads Client
+export * from './ads';

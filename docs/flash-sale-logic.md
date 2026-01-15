@@ -1,14 +1,14 @@
-# Flash Sale - Quy trình Logic Chi tiết
+# Flash Sale Logic - Shopee API v2
 
-## 1. Tổng quan Kiến trúc
+## 1. Thông tin API
 
-### 1.1 Sơ đồ hệ thống
-
+### Base URL
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              FRONTEND (React)                                │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐  │
-│  │ FlashSalePanel  │    │   useSyncData   │    │   useRealtimeData       │  │
+https://partner.shopeemobile.com
+```
+
+### Authentication
+Sử dụng thuật toán **HMAC-SHA256** để tạo Signatu│   useRealtimeData       │  │
 │  │ (UI Component)  │───▶│   (Sync Hook)   │    │   (Realtime Hook)       │  │
 │  └─────────────────┘    └────────┬────────┘    └───────────┬─────────────┘  │
 └──────────────────────────────────┼─────────────────────────┼────────────────┘

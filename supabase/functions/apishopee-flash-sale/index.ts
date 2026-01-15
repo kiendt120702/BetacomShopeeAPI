@@ -274,11 +274,14 @@ serve(async (req) => {
       case 'get-time-slots': {
         const { start_time, end_time } = body;
         const now = Math.floor(Date.now() / 1000);
-        const defaultEndTime = now + 30 * 24 * 60 * 60; // +30 days
+        
+        // Shopee API yêu cầu BẮT BUỘC cả start_time và end_time
+        const extraParams: Record<string, number> = {
+          start_time: start_time || now,
+          end_time: end_time || (now + 30 * 24 * 60 * 60), // +30 days
+        };
 
-        const extraParams: Record<string, number> = {};
-        if (start_time) extraParams.start_time = start_time;
-        extraParams.end_time = end_time || defaultEndTime;
+        console.log('[FLASH-SALE] get-time-slots params:', extraParams);
 
         result = await callShopeeAPIWithRetry(
           supabase,
@@ -290,6 +293,8 @@ serve(async (req) => {
           undefined,
           extraParams
         );
+        
+        console.log('[FLASH-SALE] get-time-slots result:', JSON.stringify(result));
         break;
       }
 
@@ -325,6 +330,9 @@ serve(async (req) => {
           });
         }
 
+        // Đảm bảo flash_sale_id là số nguyên
+        const flashSaleIdNum = Number(flash_sale_id);
+
         result = await callShopeeAPIWithRetry(
           supabase,
           credentials,
@@ -333,7 +341,7 @@ serve(async (req) => {
           shop_id,
           token,
           undefined,
-          { flash_sale_id }
+          { flash_sale_id: flashSaleIdNum }
         );
         break;
       }
@@ -365,8 +373,10 @@ serve(async (req) => {
           });
         }
 
-        const updateBody: Record<string, unknown> = { flash_sale_id };
-        if (status !== undefined) updateBody.status = status;
+        // Đảm bảo flash_sale_id là số nguyên
+        const flashSaleIdNum = Number(flash_sale_id);
+        const updateBody: Record<string, unknown> = { flash_sale_id: flashSaleIdNum };
+        if (status !== undefined) updateBody.status = Number(status);
 
         result = await callShopeeAPIWithRetry(
           supabase,
@@ -390,6 +400,9 @@ serve(async (req) => {
           });
         }
 
+        // Đảm bảo flash_sale_id là số nguyên
+        const flashSaleIdNum = Number(flash_sale_id);
+
         result = await callShopeeAPIWithRetry(
           supabase,
           credentials,
@@ -397,7 +410,7 @@ serve(async (req) => {
           'POST',
           shop_id,
           token,
-          { flash_sale_id }
+          { flash_sale_id: flashSaleIdNum }
         );
         break;
       }
@@ -412,6 +425,9 @@ serve(async (req) => {
           });
         }
 
+        // Đảm bảo flash_sale_id là số nguyên
+        const flashSaleIdNum = Number(flash_sale_id);
+
         result = await callShopeeAPIWithRetry(
           supabase,
           credentials,
@@ -419,7 +435,7 @@ serve(async (req) => {
           'POST',
           shop_id,
           token,
-          { flash_sale_id, items }
+          { flash_sale_id: flashSaleIdNum, items }
         );
         break;
       }
@@ -434,6 +450,15 @@ serve(async (req) => {
           });
         }
 
+        // Đảm bảo flash_sale_id là số nguyên (Shopee API yêu cầu)
+        const flashSaleIdNum = Number(flash_sale_id);
+        if (isNaN(flashSaleIdNum)) {
+          return new Response(JSON.stringify({ error: 'flash_sale_id must be a valid number' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
         result = await callShopeeAPIWithRetry(
           supabase,
           credentials,
@@ -442,7 +467,7 @@ serve(async (req) => {
           shop_id,
           token,
           undefined,
-          { flash_sale_id, offset, limit }
+          { flash_sale_id: flashSaleIdNum, offset, limit }
         );
         break;
       }
@@ -457,6 +482,9 @@ serve(async (req) => {
           });
         }
 
+        // Đảm bảo flash_sale_id là số nguyên
+        const flashSaleIdNum = Number(flash_sale_id);
+
         result = await callShopeeAPIWithRetry(
           supabase,
           credentials,
@@ -464,7 +492,7 @@ serve(async (req) => {
           'POST',
           shop_id,
           token,
-          { flash_sale_id, items }
+          { flash_sale_id: flashSaleIdNum, items }
         );
         break;
       }
@@ -479,6 +507,10 @@ serve(async (req) => {
           });
         }
 
+        // Đảm bảo flash_sale_id và item_id là số nguyên
+        const flashSaleIdNum = Number(flash_sale_id);
+        const itemIdNum = Number(item_id);
+
         result = await callShopeeAPIWithRetry(
           supabase,
           credentials,
@@ -486,7 +518,7 @@ serve(async (req) => {
           'POST',
           shop_id,
           token,
-          { flash_sale_id, item_id }
+          { flash_sale_id: flashSaleIdNum, item_id: itemIdNum }
         );
         break;
       }

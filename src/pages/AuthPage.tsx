@@ -38,14 +38,15 @@ const FEATURES = [
 
 export default function AuthPage() {
   const navigate = useNavigate();
-  const { isLoading, error, signIn, isAuthenticated } = useAuth();
+  const { error, signIn, isAuthenticated } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/dashboard', { replace: true });
+      navigate('/', { replace: true });
     }
   }, [isAuthenticated, navigate]);
 
@@ -62,7 +63,15 @@ export default function AuthPage() {
       return;
     }
 
-    await signIn(email, password);
+    setIsSubmitting(true);
+    const result = await signIn(email, password);
+    
+    // Nếu login thành công, navigate sẽ được trigger bởi useEffect
+    // Nếu thất bại, tắt loading để user có thể thử lại
+    if (!result.success) {
+      setIsSubmitting(false);
+    }
+    // Nếu thành công, giữ isSubmitting = true cho đến khi navigate
   };
 
   return (
@@ -152,10 +161,10 @@ export default function AuthPage() {
 
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isSubmitting}
                 className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-red-500 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-red-600 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 flex items-center justify-center gap-2"
               >
-                {isLoading ? (
+                {isSubmitting ? (
                   <>
                     <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

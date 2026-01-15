@@ -1,9 +1,11 @@
 /**
  * useSyncData - Hook quản lý sync data từ Shopee
- * Hỗ trợ sync Flash Sales và Campaigns
+ * Hỗ trợ sync Flash Sales
+ * Sử dụng React Query để cache sync status
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { SyncStatus, STALE_MINUTES } from '@/lib/shopee/flash-sale';
 import { useToast } from '@/hooks/use-toast';
@@ -12,7 +14,6 @@ export interface UseSyncDataOptions {
   shopId: number;
   userId: string;
   autoSyncOnMount?: boolean;
-  syncType: 'flash_sales' | 'campaigns';
   staleMinutes?: number;
 }
 
@@ -21,7 +22,7 @@ export interface UseSyncDataReturn {
   lastSyncedAt: string | null;
   lastError: string | null;
   isStale: boolean;
-  triggerSync: () => Promise<void>;
+  triggerSync: (forceSync?: boolean) => Promise<void>;
   syncStatus: SyncStatus | null;
 }
 
@@ -39,52 +40,75 @@ function isDataStale(lastSyncedAt: string | null, staleMinutes: number): boolean
   return diffMinutes > staleMinutes;
 }
 
+// Flash Sale interface từ Shopee API
+interface ShopeeFlashSale {
+  flash_sale_id: number;
+  timeslot_id: number;
+  status: number;
+  start_time: number;
+  end_time: number;
+  enabled_item_count: number;
+  item_count: number;
+  type: number;
+  remindme_count?: number;
+  click_count?: number;
+}
+
 export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
   const {
     shopId,
     userId,
     autoSyncOnMount = false,
-    syncType,
     staleMinutes = STALE_MINUTES,
   } = options;
 
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  
+  // Track if auto sync has been triggered for this session
+  const autoSyncTriggeredRef = useRef(false);
+
+  // Query key for sync status
+  const queryKey = ['syncStatus', shopId, userId];
+
+  // Fetch sync status using React Query
+  const { data: syncStatus } = useQuery({
+    queryKey,
+    queryFn: async (): Promise<SyncStatus | null> => {
+      if (!shopId || !userId) return null;
+
+      const { data, error } = await supabase
+        .from('apishopee_sync_status')
+        .select('*')
+        .eq('shop_id', shopId)
+        .eq('user_id', userId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('[useSyncData] Error fetching sync status:', error);
+        return null;
+      }
+
+      return data as SyncStatus | null;
+    },
+    enabled: !!shopId && !!userId,
+    staleTime: 60 * 1000, // 1 minute
+    gcTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+  });
 
   // Derived state
-  const lastSyncedAt = syncType === 'flash_sales'
-    ? syncStatus?.flash_sales_synced_at ?? null
-    : syncStatus?.campaigns_synced_at ?? null;
+  const lastSyncedAt = syncStatus?.flash_sales_synced_at ?? null;
 
   const isStale = isDataStale(lastSyncedAt, staleMinutes);
 
   /**
-   * Fetch sync status from database
+   * Trigger sync with Shopee API - Gọi trực tiếp apishopee-flash-sale
    */
-  const fetchSyncStatus = useCallback(async () => {
-    if (!shopId || !userId) return null;
-
-    const { data, error } = await supabase
-      .from('apishopee_sync_status')
-      .select('*')
-      .eq('shop_id', shopId)
-      .eq('user_id', userId)
-      .single();
-
-    if (error && error.code !== 'PGRST116') {
-      console.error('[useSyncData] Error fetching sync status:', error);
-      return null;
-    }
-
-    return data as SyncStatus | null;
-  }, [shopId, userId]);
-
-  /**
-   * Trigger sync with Shopee API
-   */
-  const triggerSync = useCallback(async () => {
+  const triggerSync = useCallback(async (_forceSync = false) => {
     if (!shopId || !userId) {
       console.error('[useSyncData] Missing shopId or userId');
       return;
@@ -99,31 +123,102 @@ export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
     setLastError(null);
 
     try {
-      const action = syncType === 'flash_sales' ? 'sync-flash-sale-data' : 'sync-campaign-data';
-
-      const { data, error } = await supabase.functions.invoke('apishopee-sync-worker', {
+      // Gọi trực tiếp apishopee-flash-sale để lấy danh sách
+      console.log('[useSyncData] Fetching flash sales from Shopee API...');
+      const { data: apiResult, error: apiError } = await supabase.functions.invoke('apishopee-flash-sale', {
         body: {
-          action,
+          action: 'get-flash-sale-list',
           shop_id: shopId,
-          user_id: userId,
+          type: 0, // 0 = All
+          offset: 0,
+          limit: 100,
         },
       });
 
-      if (error) {
-        throw new Error(error.message);
+      if (apiError) {
+        throw new Error(apiError.message);
       }
 
-      if (data?.error) {
-        throw new Error(data.error);
+      if (apiResult?.error) {
+        throw new Error(apiResult.error);
       }
 
-      // Refresh sync status
-      const newStatus = await fetchSyncStatus();
-      setSyncStatus(newStatus);
+      console.log('[useSyncData] API Response:', apiResult);
+
+      const flashSaleList: ShopeeFlashSale[] = apiResult?.response?.flash_sale_list || [];
+      console.log(`[useSyncData] Received ${flashSaleList.length} flash sales from Shopee`);
+
+      if (flashSaleList.length > 0) {
+        // Xóa dữ liệu cũ của shop (shared data, không theo user)
+        console.log('[useSyncData] Deleting old data for shop...');
+        const { error: deleteError } = await supabase
+          .from('apishopee_flash_sale_data')
+          .delete()
+          .eq('shop_id', shopId);
+
+        if (deleteError) {
+          console.error('[useSyncData] Delete error:', deleteError);
+        }
+
+        // Insert dữ liệu mới (shared per shop, synced_by tracks who synced)
+        console.log('[useSyncData] Inserting new data...');
+        const insertData = flashSaleList.map(sale => ({
+          shop_id: shopId,
+          user_id: null, // Data is shared per shop
+          synced_by: userId, // Track who performed the sync
+          flash_sale_id: sale.flash_sale_id,
+          timeslot_id: sale.timeslot_id,
+          status: sale.status,
+          start_time: sale.start_time,
+          end_time: sale.end_time,
+          enabled_item_count: sale.enabled_item_count || 0,
+          item_count: sale.item_count || 0,
+          type: sale.type,
+          remindme_count: sale.remindme_count || 0,
+          click_count: sale.click_count || 0,
+          raw_response: sale,
+          synced_at: new Date().toISOString(),
+        }));
+
+        const { error: insertError } = await supabase
+          .from('apishopee_flash_sale_data')
+          .insert(insertData);
+
+        if (insertError) {
+          console.error('[useSyncData] Insert error:', insertError);
+          throw new Error(`Lỗi lưu dữ liệu: ${insertError.message}`);
+        }
+      }
+
+      // Update sync status
+      await supabase
+        .from('apishopee_sync_status')
+        .upsert({
+          shop_id: shopId,
+          user_id: userId,
+          flash_sales_synced_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'shop_id,user_id' });
+
+      // Đợi một chút để database commit xong
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Invalidate queries to refresh data
+      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({ 
+        predicate: (query) => {
+          const key = query.queryKey;
+          return Array.isArray(key) && 
+            key[0] === 'realtime' && 
+            key[1] === 'apishopee_flash_sale_data' && 
+            key[2] === shopId;
+        },
+        refetchType: 'all',
+      });
 
       toast({
         title: 'Đồng bộ thành công',
-        description: `Đã đồng bộ ${data?.synced_count || 0} ${syncType === 'flash_sales' ? 'Flash Sales' : 'Campaigns'}`,
+        description: `Đã đồng bộ ${flashSaleList.length} Flash Sales`,
       });
     } catch (error) {
       const errorMessage = (error as Error).message;
@@ -137,32 +232,28 @@ export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
     } finally {
       setIsSyncing(false);
     }
-  }, [shopId, userId, syncType, isSyncing, fetchSyncStatus, toast]);
+  }, [shopId, userId, isSyncing, queryClient, toast, queryKey]);
 
   /**
-   * Initial fetch and auto sync
+   * Auto sync on mount - only once per session if data is stale
    */
   useEffect(() => {
-    const init = async () => {
-      const status = await fetchSyncStatus();
-      setSyncStatus(status);
+    if (!autoSyncOnMount || !shopId || !userId) return;
+    if (autoSyncTriggeredRef.current) return;
+    if (syncStatus === undefined) return; // Wait for initial fetch
 
-      // Auto sync if enabled and data is stale
-      if (autoSyncOnMount) {
-        const syncedAt = syncType === 'flash_sales'
-          ? status?.flash_sales_synced_at
-          : status?.campaigns_synced_at;
+    const syncedAt = syncStatus?.flash_sales_synced_at;
 
-        if (!status || isDataStale(syncedAt ?? null, staleMinutes)) {
-          triggerSync();
-        }
-      }
-    };
-
-    if (shopId && userId) {
-      init();
+    if (!syncStatus || isDataStale(syncedAt ?? null, staleMinutes)) {
+      autoSyncTriggeredRef.current = true;
+      triggerSync();
     }
-  }, [shopId, userId, autoSyncOnMount, syncType, staleMinutes, fetchSyncStatus, triggerSync]);
+  }, [autoSyncOnMount, shopId, userId, staleMinutes, syncStatus, triggerSync]);
+
+  // Reset auto sync flag when shop changes
+  useEffect(() => {
+    autoSyncTriggeredRef.current = false;
+  }, [shopId]);
 
   /**
    * Subscribe to sync status changes
@@ -171,7 +262,7 @@ export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
     if (!shopId || !userId) return;
 
     const channel = supabase
-      .channel(`sync_status_${shopId}_${userId}`)
+      .channel(`sync_status_${shopId}_${userId}_${Date.now()}`)
       .on(
         'postgres_changes',
         {
@@ -180,9 +271,8 @@ export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
           table: 'apishopee_sync_status',
           filter: `shop_id=eq.${shopId}`,
         },
-        async () => {
-          const newStatus = await fetchSyncStatus();
-          setSyncStatus(newStatus);
+        () => {
+          queryClient.invalidateQueries({ queryKey });
         }
       )
       .subscribe();
@@ -190,7 +280,7 @@ export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [shopId, userId, fetchSyncStatus]);
+  }, [shopId, userId, queryClient, queryKey]);
 
   return {
     isSyncing,
@@ -198,6 +288,6 @@ export function useSyncData(options: UseSyncDataOptions): UseSyncDataReturn {
     lastError,
     isStale,
     triggerSync,
-    syncStatus,
+    syncStatus: syncStatus ?? null,
   };
 }

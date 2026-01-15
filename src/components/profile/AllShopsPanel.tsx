@@ -501,17 +501,11 @@ export function AllShopsPanel() {
         <CellShopInfo
           logo={shop.shop_logo}
           name={shop.shop_name || `Shop ${shop.shop_id}`}
+          shopId={shop.shop_id}
           region={shop.region || 'VN'}
           onRefresh={() => handleRefreshShopName(shop.shop_id)}
           refreshing={refreshingShop === shop.shop_id}
         />
-      ),
-    },
-    {
-      key: 'shop_id',
-      header: 'ID',
-      render: (shop: Shop) => (
-        <CellText mono>{shop.shop_id}</CellText>
       ),
     },
     {
@@ -745,13 +739,13 @@ export function AllShopsPanel() {
       </Dialog>
 
 
-      {/* Members Dialog */}
+      {/* Members Dialog - 3 columns layout */}
       <Dialog open={membersDialogOpen} onOpenChange={setMembersDialogOpen}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[1000px] max-h-[85vh]">
           <DialogHeader>
             <DialogTitle>Phân quyền Shop</DialogTitle>
             <DialogDescription>
-              {selectedShopForMembers?.shop_name || `Shop ${selectedShopForMembers?.shop_id}`}
+              Chọn shop ở cột giữa để xem và quản lý thành viên
             </DialogDescription>
           </DialogHeader>
 
@@ -760,113 +754,156 @@ export function AllShopsPanel() {
               <Spinner size="lg" />
             </div>
           ) : (
-            <div className="space-y-6 py-4">
-              {/* Current members */}
-              <div>
-                <h4 className="text-sm font-medium mb-3">Thành viên hiện tại ({shopMembers.length})</h4>
-                {shopMembers.length === 0 ? (
-                  <p className="text-sm text-slate-500">Chưa có thành viên nào</p>
-                ) : (
-                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                    {shopMembers.map((member) => (
-                      <div
-                        key={member.id}
-                        className="flex items-center justify-between p-2 bg-slate-50 rounded-lg"
-                      >
-                        <div>
-                          <p className="text-sm font-medium">
-                            {member.profile?.full_name || member.profile?.email}
-                          </p>
-                          <p className="text-xs text-slate-500">{member.profile?.email}</p>
+            <div className="grid grid-cols-3 gap-4 py-4 min-h-[400px]">
+              {/* Left column - Available profiles to add */}
+              <div className="border rounded-lg p-3 flex flex-col">
+                <h4 className="text-sm font-medium mb-2">Nhân viên</h4>
+                <Input
+                  placeholder="Tìm kiếm..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="mb-2 h-8 text-sm"
+                />
+                <ScrollArea className="flex-1 -mx-1">
+                  <div className="space-y-1 px-1">
+                    {availableProfiles.length === 0 ? (
+                      <p className="text-xs text-slate-500 text-center py-4">
+                        {searchQuery ? 'Không tìm thấy' : 'Tất cả đã có quyền'}
+                      </p>
+                    ) : (
+                      availableProfiles.map((profile) => (
+                        <div
+                          key={profile.id}
+                          className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer"
+                          onClick={() => toggleProfileSelection(profile.id)}
+                        >
+                          <Checkbox
+                            checked={selectedProfileIds.includes(profile.id)}
+                            onCheckedChange={() => toggleProfileSelection(profile.id)}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {profile.full_name || profile.email}
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">{profile.email}</p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <CellBadge variant={member.role?.name === 'admin' ? 'success' : 'default'}>
-                            {member.role?.display_name}
-                          </CellBadge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-500 hover:text-red-600 h-7 w-7 p-0"
-                            onClick={() => handleDeleteMember(member.id)}
-                            disabled={deletingMemberId === member.id}
-                          >
-                            {deletingMemberId === member.id ? (
-                              <Spinner size="sm" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                          </Button>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+                
+                {/* Role selection and Add button */}
+                <div className="border-t pt-2 mt-2 space-y-2">
+                  <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Chọn vai trò" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allRoles.map((role) => (
+                        <SelectItem key={role.id} value={role.id}>
+                          {role.display_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    className="w-full bg-orange-500 hover:bg-orange-600 h-8 text-sm"
+                    onClick={handleAddMembers}
+                    disabled={addingMembers || selectedProfileIds.length === 0 || !selectedRoleId || !selectedShopForMembers}
+                  >
+                    {addingMembers ? <Spinner size="sm" className="mr-2" /> : null}
+                    Thêm ({selectedProfileIds.length})
+                  </Button>
+                </div>
+              </div>
+
+              {/* Middle column - Shop list */}
+              <div className="border rounded-lg p-3 flex flex-col">
+                <h4 className="text-sm font-medium mb-2">Danh sách Shop</h4>
+                <ScrollArea className="flex-1 -mx-1">
+                  <div className="space-y-1 px-1">
+                    {shops.map((shop) => (
+                      <div
+                        key={shop.id}
+                        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                          selectedShopForMembers?.id === shop.id
+                            ? 'bg-orange-100 border border-orange-300'
+                            : 'hover:bg-slate-50'
+                        }`}
+                        onClick={() => handleOpenMembersDialog(shop)}
+                      >
+                        <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {shop.shop_logo ? (
+                            <img src={shop.shop_logo} alt={shop.shop_name || ''} className="w-full h-full object-cover" />
+                          ) : (
+                            <Store className="w-4 h-4 text-slate-400" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {shop.shop_name || `Shop ${shop.shop_id}`}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {shop.region || 'VN'} - <span className="font-mono">{shop.shop_id}</span>
+                          </p>
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
+                </ScrollArea>
               </div>
 
-              {/* Add new members */}
-              <div className="border-t pt-4">
-                <h4 className="text-sm font-medium mb-3">Thêm thành viên mới</h4>
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-xs">Tìm kiếm nhân viên</Label>
-                    <Input
-                      placeholder="Nhập tên hoặc email..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="mt-1"
-                    />
+              {/* Right column - Current members of selected shop */}
+              <div className="border rounded-lg p-3 flex flex-col">
+                <h4 className="text-sm font-medium mb-2">
+                  Thành viên {selectedShopForMembers ? `(${shopMembers.length})` : ''}
+                </h4>
+                {!selectedShopForMembers ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-sm text-slate-500">Chọn shop để xem thành viên</p>
                   </div>
-
-                  <div>
-                    <Label className="text-xs">Chọn nhân viên ({selectedProfileIds.length} đã chọn)</Label>
-                    <ScrollArea className="h-[150px] border rounded-md mt-1 p-2">
-                      {availableProfiles.length === 0 ? (
-                        <p className="text-sm text-slate-500 text-center py-4">
-                          {searchQuery ? 'Không tìm thấy nhân viên' : 'Tất cả nhân viên đã có quyền'}
-                        </p>
-                      ) : (
-                        <div className="space-y-1">
-                          {availableProfiles.map((profile) => (
-                            <div
-                              key={profile.id}
-                              className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer"
-                              onClick={() => toggleProfileSelection(profile.id)}
+                ) : shopMembers.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-sm text-slate-500">Chưa có thành viên</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="flex-1 -mx-1">
+                    <div className="space-y-1 px-1">
+                      {shopMembers.map((member) => (
+                        <div
+                          key={member.id}
+                          className="flex items-center justify-between p-2 bg-slate-50 rounded"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {member.profile?.full_name || member.profile?.email}
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">{member.profile?.email}</p>
+                          </div>
+                          <div className="flex items-center gap-1 ml-2">
+                            <CellBadge variant={member.role?.name === 'admin' ? 'success' : 'default'}>
+                              {member.role?.display_name}
+                            </CellBadge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-500 hover:text-red-600 h-6 w-6 p-0"
+                              onClick={() => handleDeleteMember(member.id)}
+                              disabled={deletingMemberId === member.id}
                             >
-                              <Checkbox
-                                checked={selectedProfileIds.includes(profile.id)}
-                                onCheckedChange={() => toggleProfileSelection(profile.id)}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">
-                                  {profile.full_name || profile.email}
-                                </p>
-                                {profile.full_name && (
-                                  <p className="text-xs text-slate-500 truncate">{profile.email}</p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                              {deletingMemberId === member.id ? (
+                                <Spinner size="sm" />
+                              ) : (
+                                <Trash2 className="w-3 h-3" />
+                              )}
+                            </Button>
+                          </div>
                         </div>
-                      )}
-                    </ScrollArea>
-                  </div>
-
-                  <div>
-                    <Label className="text-xs">Vai trò</Label>
-                    <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Chọn vai trò" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {allRoles.map((role) => (
-                          <SelectItem key={role.id} value={role.id}>
-                            {role.display_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
               </div>
             </div>
           )}
@@ -874,14 +911,6 @@ export function AllShopsPanel() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setMembersDialogOpen(false)}>
               Đóng
-            </Button>
-            <Button
-              className="bg-orange-500 hover:bg-orange-600"
-              onClick={handleAddMembers}
-              disabled={addingMembers || selectedProfileIds.length === 0 || !selectedRoleId}
-            >
-              {addingMembers ? <Spinner size="sm" className="mr-2" /> : null}
-              {addingMembers ? 'Đang thêm...' : `Thêm ${selectedProfileIds.length} thành viên`}
             </Button>
           </DialogFooter>
         </DialogContent>

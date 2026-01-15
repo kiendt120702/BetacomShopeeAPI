@@ -108,3 +108,33 @@ export function clearShopUuidCache(shopId?: number): void {
     shopUuidCache.clear();
   }
 }
+
+/**
+ * Force refresh session khi gặp lỗi JWT expired
+ * Trả về true nếu refresh thành công
+ */
+export async function forceRefreshSession(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) {
+      console.error('[Supabase] Failed to refresh session:', error);
+      // Nếu refresh fail, sign out user
+      await supabase.auth.signOut();
+      return false;
+    }
+    console.log('[Supabase] Session refreshed successfully');
+    return !!data.session;
+  } catch (err) {
+    console.error('[Supabase] Error refreshing session:', err);
+    return false;
+  }
+}
+
+/**
+ * Check if error is JWT expired error
+ */
+export function isJwtExpiredError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { code?: string; message?: string };
+  return err.code === 'PGRST303' || err.message?.includes('JWT expired') || false;
+}

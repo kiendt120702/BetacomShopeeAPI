@@ -31,12 +31,13 @@ import { cn } from "@/lib/utils";
 interface CellShopInfoProps {
   logo?: string | null;
   name: string;
+  shopId?: number;
   region?: string;
   onRefresh?: () => void;
   refreshing?: boolean;
 }
 
-export function CellShopInfo({ logo, name, region, onRefresh, refreshing }: CellShopInfoProps) {
+export function CellShopInfo({ logo, name, shopId, region, onRefresh, refreshing }: CellShopInfoProps) {
   return (
     <div className="flex items-center gap-3">
       <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -63,7 +64,9 @@ export function CellShopInfo({ logo, name, region, onRefresh, refreshing }: Cell
             </button>
           )}
         </div>
-        {region && <p className="text-xs text-slate-400">{region}</p>}
+        <p className="text-xs text-slate-400">
+          {region}{region && shopId && ' - '}{shopId && <span className="font-mono text-slate-500">{shopId}</span>}
+        </p>
       </div>
     </div>
   );
@@ -167,7 +170,7 @@ export function SimpleDataTable<TData>({
             {columns.map((col) => (
               <th
                 key={col.key}
-                className="h-11 px-4 text-left align-middle font-medium text-slate-600 text-sm"
+                className="h-11 px-4 text-left align-middle font-medium text-slate-600 text-sm whitespace-nowrap"
                 style={{ width: col.width }}
               >
                 {col.header}
@@ -315,86 +318,90 @@ export function DataTable<TData, TValue>({
 
       {/* Table */}
       <div className="relative">
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm text-slate-500">{loadingMessage}</p>
-            </div>
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead className="bg-slate-50 border-b sticky top-0 z-10">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <tr key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => {
-                    return (
-                      <th
-                        key={header.id}
-                        className="h-11 px-4 text-left align-middle font-medium text-slate-600 text-sm"
-                        style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
-                      >
-                        {header.isPlaceholder ? null : (
-                          <div
-                            className={cn(
-                              "flex items-center gap-1",
-                              header.column.getCanSort() && "cursor-pointer select-none hover:text-slate-900"
-                            )}
-                            onClick={header.column.getToggleSortingHandler()}
-                          >
-                            {flexRender(
-                              header.column.columnDef.header,
-                              header.getContext()
-                            )}
-                            {header.column.getCanSort() && (
-                              <span className="ml-1">
-                                {{
-                                  asc: <ChevronUp className="h-4 w-4" />,
-                                  desc: <ChevronDown className="h-4 w-4" />,
-                                }[header.column.getIsSorted() as string] ?? (
-                                  <ChevronsUpDown className="h-4 w-4 text-slate-400" />
-                                )}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </th>
-                    );
-                  })}
+        <table className="w-full">
+          {/* Fixed Header */}
+          <thead className="bg-slate-50 border-b sticky top-0 z-10">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => {
+                  return (
+                    <th
+                      key={header.id}
+                      className="h-11 px-4 text-left align-middle font-medium text-slate-600 text-sm whitespace-nowrap"
+                      style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
+                    >
+                      {header.isPlaceholder ? null : (
+                        <div
+                          className={cn(
+                            "flex items-center gap-1",
+                            header.column.getCanSort() && "cursor-pointer select-none hover:text-slate-900"
+                          )}
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext()
+                          )}
+                          {header.column.getCanSort() && (
+                            <span className="ml-1">
+                              {{
+                                asc: <ChevronUp className="h-4 w-4" />,
+                                desc: <ChevronDown className="h-4 w-4" />,
+                              }[header.column.getIsSorted() as string] ?? (
+                                <ChevronsUpDown className="h-4 w-4 text-slate-400" />
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
+          </thead>
+          {/* Body with loading state */}
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={columns.length} className="h-48">
+                  <div className="flex items-center justify-center py-16">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      <p className="text-sm text-slate-500">{loadingMessage}</p>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            ) : table.getRowModel().rows?.length ? (
+              table.getRowModel().rows.map((row) => (
+                <tr
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                  className="border-b transition-colors hover:bg-slate-50/50 data-[state=selected]:bg-slate-100"
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} className="px-4 py-3 align-middle text-sm">
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
+                    </td>
+                  ))}
                 </tr>
-              ))}
-            </thead>
-            <tbody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    data-state={row.getIsSelected() && "selected"}
-                    className="border-b transition-colors hover:bg-slate-50/50 data-[state=selected]:bg-slate-100"
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3 align-middle text-sm">
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td
-                    colSpan={columns.length}
-                    className="h-32 text-center text-slate-500"
-                  >
-                    {emptyMessage}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        )}
+              ))
+            ) : (
+              <tr>
+                <td
+                  colSpan={columns.length}
+                  className="h-32 text-center text-slate-500"
+                >
+                  {emptyMessage}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       {/* Pagination */}

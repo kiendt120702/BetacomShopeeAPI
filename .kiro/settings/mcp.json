@@ -2,9 +2,9 @@
   "mcpServers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=tjzeskxkqvjbowikzqpv",
+      "url": "https://mcp.supabase.com/mcp?project_ref=ohlwhhxhgpotlwfgqhhu",
       "headers": {
-        "Authorization": "Bearer sbp_15ce9b9186ade4eed28b3fc1c334581c642752f1"
+        "Authorization": "Bearer sbp_55a1303ce35758270ad51b0c3d9e882c02033dfb"
       },
       "disabled": false,
       "autoApprove": [
@@ -18,7 +18,8 @@
         "list_migrations",
         "get_advisors",
         "get_project_url",
-        "get_publishable_keys"
+        "get_publishable_keys",
+        "search_docs"
       ]
     }
   }

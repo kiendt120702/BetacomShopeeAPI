@@ -4,8 +4,8 @@
  * Giải quyết vấn đề mỗi useAuth() tạo state riêng
  */
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import { supabase, forceRefreshSession, isJwtExpiredError } from '@/lib/supabase';
 import { User, Session } from '@supabase/supabase-js';
 
 interface Profile {
@@ -13,7 +13,7 @@ interface Profile {
   email: string;
   full_name: string | null;
   phone: string | null;
-  work_type: 'fulltime' | 'parttime';
+  system_role: string | null;
   join_date: string | null;
   created_at: string;
   updated_at: string;
@@ -44,6 +44,28 @@ async function getUserProfile(userId: string): Promise<Profile | null> {
     .single();
 
   if (profileError) {
+    // Nếu JWT expired, thử refresh session
+    if (isJwtExpiredError(profileError)) {
+      console.log('[Auth] JWT expired, attempting refresh...');
+      const refreshed = await forceRefreshSession();
+      if (refreshed) {
+        // Retry sau khi refresh
+        const { data: retryData, error: retryError } = await supabase
+          .from('sys_profiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
+        
+        if (!retryError && retryData) {
+          return {
+            ...retryData,
+            role_display_name: retryData.system_role === 'admin' ? 'Admin' : 'User',
+          };
+        }
+      }
+      return null;
+    }
+
     if (profileError.code === 'PGRST116') {
       const { data: { user } } = await supabase.auth.getUser();
 
@@ -53,7 +75,6 @@ async function getUserProfile(userId: string): Promise<Profile | null> {
           id: userId,
           email: user?.email || '',
           full_name: user?.user_metadata?.full_name || '',
-          work_type: 'fulltime',
         })
         .select('*')
         .single();
@@ -62,7 +83,7 @@ async function getUserProfile(userId: string): Promise<Profile | null> {
 
       return {
         ...newProfile,
-        role_display_name: newProfile.work_type === 'fulltime' ? 'Full-time' : 'Part-time',
+        role_display_name: 'User',
       };
     }
 
@@ -71,7 +92,7 @@ async function getUserProfile(userId: string): Promise<Profile | null> {
 
   return {
     ...profileData,
-    role_display_name: profileData.work_type === 'fulltime' ? 'Full-time' : 'Part-time',
+    role_display_name: profileData.system_role === 'admin' ? 'Admin' : 'User',
   };
 }
 
@@ -81,7 +102,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  
+  // Ref để track session hiện tại cho event handler
+  const sessionRef = useRef<Session | null>(null);
+  sessionRef.current = session;
+  
+  // Flag để biết đã init xong chưa - sau khi init xong thì KHÔNG BAO GIỜ set isLoading = true nữa
+  const isInitializedRef = useRef(false);
 
   const loadProfile = async (userId: string) => {
     const profileData = await getUserProfile(userId);
@@ -92,40 +119,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     const initializeAuth = async () => {
+      console.log('[Auth] Starting initialization...');
       try {
-        // Lấy session hiện tại trước
         const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
         
         if (!mounted) return;
 
         if (sessionError) {
           console.error('[Auth] Error getting session:', sessionError);
-          setIsLoading(false);
-          setIsInitialized(true);
-          return;
-        }
-
-        if (currentSession?.user) {
+        } else if (currentSession?.user) {
+          console.log('[Auth] Found existing session for user:', currentSession.user.id);
           setSession(currentSession);
           setUser(currentSession.user);
-          await loadProfile(currentSession.user.id);
+          // Load profile nhưng không block init
+          loadProfile(currentSession.user.id).catch(err => {
+            console.error('[Auth] Error loading profile during init:', err);
+          });
+        } else {
+          console.log('[Auth] No existing session found');
         }
-
-        setIsLoading(false);
-        setIsInitialized(true);
       } catch (err) {
         console.error('[Auth] Init error:', err);
+      } finally {
         if (mounted) {
+          console.log('[Auth] Initialization complete, setting isLoading = false');
           setIsLoading(false);
-          setIsInitialized(true);
+          isInitializedRef.current = true;
         }
       }
     };
 
-    // Khởi tạo auth state
     initializeAuth();
 
-    // Lắng nghe thay đổi auth state
+    // Lắng nghe thay đổi auth state - KHÔNG BAO GIỜ set isLoading = true sau khi init
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
         if (!mounted) return;
@@ -134,7 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         switch (event) {
           case 'TOKEN_REFRESHED':
-            // Chỉ update session/user, không thay đổi loading
+            console.log('[Auth] Token refreshed successfully');
             if (newSession) {
               setSession(newSession);
               setUser(newSession.user);
@@ -143,11 +169,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           case 'SIGNED_IN':
             if (newSession?.user) {
-              setSession(newSession);
-              setUser(newSession.user);
-              // Chỉ load profile nếu đã initialized (tránh duplicate)
-              if (isInitialized) {
-                await loadProfile(newSession.user.id);
+              const currentUserId = sessionRef.current?.user?.id;
+              if (currentUserId !== newSession.user.id) {
+                setSession(newSession);
+                setUser(newSession.user);
+                // Load profile ở background, không block UI
+                loadProfile(newSession.user.id);
+              } else {
+                setSession(newSession);
               }
             }
             break;
@@ -156,39 +185,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setSession(null);
             setUser(null);
             setProfile(null);
-            setIsLoading(false);
             break;
 
           case 'USER_UPDATED':
             if (newSession?.user) {
               setSession(newSession);
               setUser(newSession.user);
-              await loadProfile(newSession.user.id);
+              loadProfile(newSession.user.id);
             }
             break;
-
-          case 'INITIAL_SESSION':
-            // Đã xử lý trong initializeAuth, bỏ qua
-            break;
-
-          default:
-            // Các event khác: đảm bảo không bị stuck loading
-            if (!isInitialized) {
-              setIsLoading(false);
-              setIsInitialized(true);
-            }
         }
       }
     );
 
-    // Safety timeout: đảm bảo không bao giờ bị stuck loading quá 5s
+    // Safety timeout cho initial load
     const safetyTimeout = setTimeout(() => {
-      if (mounted && isLoading) {
-        console.warn('[Auth] Safety timeout triggered - forcing loading to false');
+      if (mounted && !isInitializedRef.current) {
+        console.warn('[Auth] Safety timeout triggered');
         setIsLoading(false);
-        setIsInitialized(true);
+        isInitializedRef.current = true;
       }
-    }, 5000);
+    }, 3000);
 
     return () => {
       mounted = false;
@@ -227,33 +244,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    setIsLoading(true);
+    console.log('[Auth] signIn called for:', email);
     setError(null);
 
     try {
+      console.log('[Auth] Calling supabase.auth.signInWithPassword...');
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+      console.log('[Auth] signInWithPassword returned, error:', error, 'user:', data?.user?.id);
 
       if (error) throw error;
 
+      console.log('[Auth] Setting user and session...');
       setUser(data.user);
       setSession(data.session);
-      setIsLoading(false);
+      
+      // Load profile ngay sau khi login thành công (không await để không block)
+      if (data.user) {
+        console.log('[Auth] Loading profile for user:', data.user.id);
+        loadProfile(data.user.id);
+      }
 
+      console.log('[Auth] signIn success, returning');
       return { success: true };
     } catch (err) {
+      console.error('[Auth] signIn error:', err);
       const message = err instanceof Error ? err.message : 'Đăng nhập thất bại';
       setError(message);
-      setIsLoading(false);
       return { success: false, error: message };
     }
   };
 
   const signOut = async () => {
-    setIsLoading(true);
-
     try {
       await supabase.auth.signOut();
       setUser(null);
@@ -263,8 +287,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Đăng xuất thất bại';
       setError(message);
-    } finally {
-      setIsLoading(false);
     }
   };
 

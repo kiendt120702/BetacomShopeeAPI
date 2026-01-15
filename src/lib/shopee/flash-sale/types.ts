@@ -178,7 +178,6 @@ export interface SyncStatus {
   id: string;
   shop_id: number;
   user_id: string;
-  campaigns_synced_at: string | null;
   flash_sales_synced_at: string | null;
   is_syncing: boolean;
   last_sync_error: string | null;

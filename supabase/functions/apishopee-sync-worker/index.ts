@@ -1,7 +1,11 @@
 /**
  * Supabase Edge Function: Shopee Sync Worker
  * Background sync worker để đồng bộ Flash Sale data từ Shopee
- * Hỗ trợ multi-partner: lấy credentials từ database
+ * 
+ * Logic nghiệp vụ:
+ * 1. Gọi API lấy toàn bộ Flash Sale từ Shopee
+ * 2. Xóa dữ liệu cũ và insert dữ liệu mới
+ * 3. Lọc Flash Sale đã kết thúc trong 30 ngày qua
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
@@ -21,28 +25,34 @@ const PROXY_URL = Deno.env.get('SHOPEE_PROXY_URL') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
+// Constants
+const DAYS_EXPIRED = 30; // Lấy Flash Sale đã kết thúc trong 30 ngày qua
+
 // Interface cho partner credentials
 interface PartnerCredentials {
   partnerId: number;
   partnerKey: string;
 }
 
-// Flash Sale data interface
-interface FlashSaleData {
+// Flash Sale data interface từ Shopee API
+interface ShopeeFlashSale {
   flash_sale_id: number;
   timeslot_id: number;
-  status: number;
-  start_time: number;
-  end_time: number;
+  status: number;           // 0: Deleted, 1: Enabled, 2: Disabled, 3: Rejected
+  start_time: number;       // Unix timestamp
+  end_time: number;         // Unix timestamp
   enabled_item_count: number;
   item_count: number;
-  type: number;
+  type: number;             // 1: Upcoming, 2: Ongoing, 3: Expired
   remindme_count?: number;
   click_count?: number;
 }
 
 // ==================== HELPER FUNCTIONS ====================
 
+/**
+ * Lấy partner credentials từ shop hoặc fallback env
+ */
 async function getPartnerCredentials(
   supabase: ReturnType<typeof createClient>,
   shopId: number
@@ -68,6 +78,9 @@ async function getPartnerCredentials(
   };
 }
 
+/**
+ * Gọi API qua proxy hoặc trực tiếp
+ */
 async function fetchWithProxy(targetUrl: string, options: RequestInit): Promise<Response> {
   if (PROXY_URL) {
     const proxyUrl = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
@@ -77,6 +90,9 @@ async function fetchWithProxy(targetUrl: string, options: RequestInit): Promise<
   return await fetch(targetUrl, options);
 }
 
+/**
+ * Tạo HMAC-SHA256 signature cho Shopee API
+ */
 function createSignature(
   partnerKey: string,
   partnerId: number,
@@ -94,6 +110,9 @@ function createSignature(
   return hmac.digest('hex');
 }
 
+/**
+ * Refresh access token khi hết hạn
+ */
 async function refreshAccessToken(
   credentials: PartnerCredentials,
   refreshToken: string,
@@ -118,6 +137,9 @@ async function refreshAccessToken(
   return await response.json();
 }
 
+/**
+ * Lưu token mới vào database
+ */
 async function saveToken(
   supabase: ReturnType<typeof createClient>,
   shopId: number,
@@ -141,6 +163,9 @@ async function saveToken(
   }
 }
 
+/**
+ * Lấy token từ database với auto-refresh
+ */
 async function getTokenWithAutoRefresh(
   supabase: ReturnType<typeof createClient>,
   shopId: number
@@ -158,6 +183,9 @@ async function getTokenWithAutoRefresh(
   throw new Error('Token not found. Please authenticate first.');
 }
 
+/**
+ * Gọi Shopee API với auto-retry khi token hết hạn
+ */
 async function callShopeeAPIWithRetry(
   supabase: ReturnType<typeof createClient>,
   credentials: PartnerCredentials,
@@ -189,7 +217,7 @@ async function callShopeeAPIWithRetry(
     }
 
     const url = `${SHOPEE_BASE_URL}${path}?${params.toString()}`;
-    console.log('[SYNC-WORKER] Calling Shopee API:', path);
+    console.log('[SYNC-WORKER] Calling Shopee API:', path, 'params:', extraParams);
 
     const options: RequestInit = {
       method,
@@ -206,6 +234,7 @@ async function callShopeeAPIWithRetry(
 
   let result = await makeRequest(token.access_token);
 
+  // Auto-retry khi token hết hạn
   if (result.error === 'error_auth' || result.message?.includes('Invalid access_token')) {
     console.log('[AUTO-RETRY] Invalid token detected, refreshing...');
 
@@ -220,8 +249,70 @@ async function callShopeeAPIWithRetry(
   return result;
 }
 
+// ==================== FLASH SALE SYNC FUNCTIONS ====================
 
-// ==================== SYNC FUNCTIONS ====================
+// Endpoint đúng theo Shopee API v2
+const FLASH_SALE_LIST_PATH = '/api/v2/shop_flash_sale/get_shop_flash_sale_list';
+
+/**
+ * Lấy danh sách Flash Sale từ Shopee API
+ * Endpoint: /api/v2/shop_flash_sale/get_shop_flash_sale_list
+ * @param type 0: All, 1: Upcoming, 2: Ongoing, 3: Expired
+ */
+async function fetchFlashSaleList(
+  supabase: ReturnType<typeof createClient>,
+  credentials: PartnerCredentials,
+  shopId: number,
+  token: { access_token: string; refresh_token: string },
+  type: 0 | 1 | 2 | 3 = 0
+): Promise<ShopeeFlashSale[]> {
+  const result = await callShopeeAPIWithRetry(
+    supabase,
+    credentials,
+    FLASH_SALE_LIST_PATH,
+    'GET',
+    shopId,
+    token,
+    undefined,
+    { type, offset: 0, limit: 100 }
+  ) as { error?: string; message?: string; response?: { flash_sale_list?: ShopeeFlashSale[]; total_count?: number } };
+
+  console.log(`[SYNC-WORKER] API Response for type=${type}:`, JSON.stringify({
+    error: result.error,
+    message: result.message,
+    total_count: result.response?.total_count,
+    flash_sale_count: result.response?.flash_sale_list?.length || 0,
+  }));
+
+  if (result.error) {
+    console.error(`[SYNC-WORKER] Error fetching flash sales (type=${type}):`, result.message || result.error);
+    return [];
+  }
+
+  return result.response?.flash_sale_list || [];
+}
+
+/**
+ * Lọc Flash Sale theo thời gian
+ * - Upcoming/Ongoing: Lấy tất cả (không filter)
+ * - Expired: end_time trong 30 ngày qua
+ */
+function filterFlashSalesByTime(flashSales: ShopeeFlashSale[]): ShopeeFlashSale[] {
+  const now = Math.floor(Date.now() / 1000);
+  const daysExpiredBefore = now - (DAYS_EXPIRED * 24 * 60 * 60); // 30 ngày trước
+
+  return flashSales.filter(sale => {
+    // Flash Sale sắp diễn ra hoặc đang diễn ra - lấy tất cả
+    if (sale.type === 1 || sale.type === 2) {
+      return true;
+    }
+    // Flash Sale đã kết thúc - lấy trong 30 ngày qua
+    if (sale.type === 3) {
+      return sale.end_time >= daysExpiredBefore;
+    }
+    return false;
+  });
+}
 
 /**
  * Update sync status in database
@@ -255,14 +346,16 @@ async function updateSyncStatus(
 }
 
 /**
- * Sync Flash Sale data from Shopee API
+ * Sync Flash Sale data từ Shopee API
+ * Luôn gọi API lấy toàn bộ dữ liệu, sau đó upsert vào database
  */
 async function syncFlashSaleData(
   supabase: ReturnType<typeof createClient>,
   credentials: PartnerCredentials,
   shopId: number,
   userId: string,
-  token: { access_token: string; refresh_token: string }
+  token: { access_token: string; refresh_token: string },
+  _forceSync = false
 ): Promise<{ success: boolean; synced_count: number; error?: string }> {
   try {
     // Update sync status to syncing
@@ -272,77 +365,82 @@ async function syncFlashSaleData(
       sync_progress: { current_step: 'fetching', total_items: 0, processed_items: 0 },
     });
 
-    // Fetch all flash sales from Shopee (type=0 means all types)
-    const result = await callShopeeAPIWithRetry(
-      supabase,
-      credentials,
-      '/api/v2/shop_flash_sale/get_shop_flash_sale_list',
-      'GET',
-      shopId,
-      token,
-      undefined,
-      { type: 0, offset: 0, limit: 100 }
-    ) as { error?: string; message?: string; response?: { flash_sale_list?: FlashSaleData[] } };
+    // Fetch tất cả Flash Sales từ Shopee API với type=0 (All)
+    console.log('[SYNC-WORKER] Fetching all Flash Sales (type=0)...');
+    const allFlashSales = await fetchFlashSaleList(supabase, credentials, shopId, token, 0);
 
-    if (result.error) {
-      throw new Error(result.message || result.error);
+    console.log(`[SYNC-WORKER] Total fetched: ${allFlashSales.length}`);
+
+    // Lọc theo thời gian
+    const filteredFlashSales = filterFlashSalesByTime(allFlashSales);
+    console.log(`[SYNC-WORKER] After time filter: ${filteredFlashSales.length} flash sales`);
+
+    if (filteredFlashSales.length === 0) {
+      console.log('[SYNC-WORKER] No flash sales to sync');
+      await updateSyncStatus(supabase, shopId, userId, {
+        is_syncing: false,
+        flash_sales_synced_at: new Date().toISOString(),
+        last_sync_error: null,
+        sync_progress: { current_step: 'completed', total_items: 0, processed_items: 0 },
+      });
+      return { success: true, synced_count: 0 };
     }
 
-    const flashSaleList = result.response?.flash_sale_list || [];
-    console.log(`[SYNC-WORKER] Fetched ${flashSaleList.length} flash sales`);
-
-    // Update progress
-    await updateSyncStatus(supabase, shopId, userId, {
-      sync_progress: { current_step: 'processing', total_items: flashSaleList.length, processed_items: 0 },
-    });
-
-    // Delete existing flash sale data for this shop
+    // Xóa dữ liệu cũ của shop này (shared data, không theo user)
+    console.log('[SYNC-WORKER] Deleting old data for shop...');
     const { error: deleteError } = await supabase
       .from('apishopee_flash_sale_data')
       .delete()
       .eq('shop_id', shopId);
 
     if (deleteError) {
-      console.error('[SYNC-WORKER] Failed to delete existing data:', deleteError);
+      console.error('[SYNC-WORKER] Delete error:', deleteError);
     }
 
-    // Insert new flash sale data
-    if (flashSaleList.length > 0) {
-      const insertData = flashSaleList.map((sale: FlashSaleData) => ({
-        shop_id: shopId,
-        user_id: userId,
-        flash_sale_id: sale.flash_sale_id,
-        timeslot_id: sale.timeslot_id,
-        status: sale.status,
-        start_time: sale.start_time,
-        end_time: sale.end_time,
-        enabled_item_count: sale.enabled_item_count || 0,
-        item_count: sale.item_count || 0,
-        type: sale.type,
-        remindme_count: sale.remindme_count || 0,
-        click_count: sale.click_count || 0,
-        raw_response: sale,
-        synced_at: new Date().toISOString(),
-      }));
+    // Insert tất cả dữ liệu mới (shared per shop, synced_by tracks who synced)
+    console.log('[SYNC-WORKER] Inserting new data...');
+    const insertData = filteredFlashSales.map(sale => ({
+      shop_id: shopId,
+      user_id: null, // Data is shared per shop
+      synced_by: userId, // Track who performed the sync
+      flash_sale_id: sale.flash_sale_id,
+      timeslot_id: sale.timeslot_id,
+      status: sale.status,
+      start_time: sale.start_time,
+      end_time: sale.end_time,
+      enabled_item_count: sale.enabled_item_count || 0,
+      item_count: sale.item_count || 0,
+      type: sale.type,
+      remindme_count: sale.remindme_count || 0,
+      click_count: sale.click_count || 0,
+      raw_response: sale,
+      synced_at: new Date().toISOString(),
+    }));
 
-      const { error: insertError } = await supabase
-        .from('apishopee_flash_sale_data')
-        .insert(insertData);
+    const { error: insertError } = await supabase
+      .from('apishopee_flash_sale_data')
+      .insert(insertData);
 
-      if (insertError) {
-        throw new Error(`Failed to insert flash sale data: ${insertError.message}`);
-      }
+    if (insertError) {
+      console.error('[SYNC-WORKER] Insert error:', insertError);
+      throw new Error(`Failed to insert flash sales: ${insertError.message}`);
     }
+
+    console.log(`[SYNC-WORKER] Successfully synced ${filteredFlashSales.length} flash sales`);
 
     // Update sync status to completed
     await updateSyncStatus(supabase, shopId, userId, {
       is_syncing: false,
       flash_sales_synced_at: new Date().toISOString(),
       last_sync_error: null,
-      sync_progress: { current_step: 'completed', total_items: flashSaleList.length, processed_items: flashSaleList.length },
+      sync_progress: { 
+        current_step: 'completed', 
+        total_items: filteredFlashSales.length, 
+        processed_items: filteredFlashSales.length 
+      },
     });
 
-    return { success: true, synced_count: flashSaleList.length };
+    return { success: true, synced_count: filteredFlashSales.length };
   } catch (error) {
     const errorMessage = (error as Error).message;
     console.error('[SYNC-WORKER] Sync failed:', errorMessage);
@@ -367,7 +465,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, shop_id, user_id } = body;
+    const { action, shop_id, user_id, force_sync } = body;
 
     if (!shop_id) {
       return new Response(JSON.stringify({ error: 'shop_id is required' }), {
@@ -392,7 +490,7 @@ serve(async (req) => {
         const credentials = await getPartnerCredentials(supabase, shop_id);
         const token = await getTokenWithAutoRefresh(supabase, shop_id);
 
-        result = await syncFlashSaleData(supabase, credentials, shop_id, user_id, token);
+        result = await syncFlashSaleData(supabase, credentials, shop_id, user_id, token, force_sync === true);
         break;
       }
 
