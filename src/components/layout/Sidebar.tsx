@@ -22,6 +22,7 @@ import {
   ShoppingCart,
   Star,
   Megaphone,
+  Clock,
 } from 'lucide-react';
 
 // Admin email - chỉ tài khoản này mới thấy tab Quản lý Shop
@@ -30,6 +31,8 @@ const ADMIN_EMAIL = 'betacom.work@gmail.com';
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
 interface MenuItem {
@@ -40,6 +43,8 @@ interface MenuItem {
   adminOnly?: boolean;
   children?: { title: string; icon: typeof User; path: string; permissionKey?: string; adminOnly?: boolean }[];
 }
+
+
 
 const menuItems: MenuItem[] = [
   {
@@ -72,8 +77,11 @@ const menuItems: MenuItem[] = [
   {
     title: 'Flash Sale',
     icon: Zap,
-    path: '/flash-sale',
     permissionKey: 'flash-sale',
+    children: [
+      { title: 'Danh sách', icon: Zap, path: '/flash-sale', permissionKey: 'flash-sale' },
+      { title: 'Lịch sử', icon: Clock, path: '/flash-sale/auto-setup', permissionKey: 'flash-sale' },
+    ],
   },
   {
     title: 'Quảng cáo',
@@ -93,11 +101,18 @@ const menuItems: MenuItem[] = [
   },
 ];
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose }: SidebarProps) {
   const location = useLocation();
   const { user, profile, signOut } = useAuth();
   const [expandedMenus, setExpandedMenus] = useState<string[]>(['Cài đặt']);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
+
+  const handleLeafClick = () => {
+    if (window.innerWidth < 768 && onMobileClose) {
+      onMobileClose();
+    }
+  };
+
 
   // Kiểm tra user hiện tại có phải admin không
   const isSystemAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
@@ -106,7 +121,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   useEffect(() => {
     const fetchPermissions = async () => {
       if (!user?.id) return;
-      
+
       try {
         const { data, error } = await supabase
           .from('sys_profiles')
@@ -178,8 +193,10 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 h-screen bg-white border-r border-slate-200 transition-all duration-300 z-20 flex flex-col',
-        collapsed ? 'w-16' : 'w-64'
+        'fixed left-0 top-0 h-screen bg-white border-r border-slate-200 transition-all duration-300 z-50 flex flex-col',
+        collapsed ? 'md:w-16' : 'md:w-64',
+        'w-64', // Mobile width
+        mobileOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full md:translate-x-0'
       )}
     >
       {/* Logo */}
@@ -251,6 +268,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                               ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md'
                               : 'text-slate-600 hover:bg-slate-100'
                           )}
+                          onClick={handleLeafClick}
                         >
                           <ChildIcon className={cn('w-4 h-4', isChildActive ? 'text-white' : 'text-slate-500')} />
                           <span className={cn('font-medium text-sm', isChildActive ? 'text-white' : 'text-slate-700')}>
@@ -276,6 +294,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   : 'text-slate-600 hover:bg-slate-100',
                 collapsed ? 'justify-center' : ''
               )}
+              onClick={handleLeafClick}
             >
               <Icon className={cn('w-5 h-5 flex-shrink-0', isActive ? 'text-white' : 'text-slate-500')} />
               <span className={cn(

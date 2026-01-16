@@ -39,7 +39,7 @@ export default function FlashSalePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="h-full flex flex-col">
       {/* Flash Sale Panel - key để force re-mount khi đổi shop */}
       {selectedShopId && user?.id ? (
         <FlashSalePanel key={selectedShopId} shopId={selectedShopId} userId={user.id} />

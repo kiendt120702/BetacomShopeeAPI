@@ -3,7 +3,7 @@
  */
 
 import { useLocation, Link } from 'react-router-dom';
-import { ChevronRight, Home } from 'lucide-react';
+import { ChevronRight, Home, Menu } from 'lucide-react';
 import ShopSelector from './ShopSelector';
 
 // Map route path to display name
@@ -59,22 +59,22 @@ function getSegmentName(segment: string, prevSegment?: string, isLast?: boolean,
     }
     return `#${segment}`;
   }
-  
+
   // Check if this is a child route that needs special naming
   if (prevSegment && childRouteNames[prevSegment]) {
     return childRouteNames[prevSegment][segment] || routeNames[segment] || segment;
   }
-  
+
   // For parent routes that have children, show parent name when not last
   if (!isLast && parentRouteNames[segment]) {
     return parentRouteNames[segment];
   }
-  
+
   // For parent routes when they ARE the last item (e.g., /reviews)
   if (isLast && childRouteNames[segment]) {
     return childRouteNames[segment][''] || routeNames[segment] || segment;
   }
-  
+
   return routeNames[segment] || segment;
 }
 
@@ -85,19 +85,23 @@ const virtualParentRoutes: Record<string, { parentName: string; childName: strin
   'flash-sale': { parentName: 'Flash Sale', childName: 'Danh sách' },
 };
 
-export default function Breadcrumb() {
+interface BreadcrumbProps {
+  onMobileMenuClick?: () => void;
+}
+
+export default function Breadcrumb({ onMobileMenuClick }: BreadcrumbProps) {
   const location = useLocation();
-  
+
   // Parse path segments
   const pathSegments = location.pathname.split('/').filter(Boolean);
-  
+
   // Build breadcrumb items
   let breadcrumbItems = pathSegments.map((segment, index) => {
     const path = '/' + pathSegments.slice(0, index + 1).join('/');
     const prevSegment = index > 0 ? pathSegments[index - 1] : undefined;
     const isLast = index === pathSegments.length - 1;
     const name = getSegmentName(segment, prevSegment, isLast, pathSegments);
-    
+
     return { path, name, isLast, segment };
   });
 
@@ -115,24 +119,31 @@ export default function Breadcrumb() {
     <div className="bg-white border-b border-slate-200 px-6 h-[73px] flex items-center">
       <div className="flex items-center justify-between w-full">
         {/* Breadcrumb Navigation */}
-        <nav className="flex items-center gap-2 text-sm">
-          <Link 
-            to="/" 
-            className="flex items-center gap-1 text-slate-500 hover:text-orange-500 transition-colors"
+        <nav className="flex items-center gap-2 text-sm flex-1 min-w-0 mr-4 overflow-hidden">
+          {/* Mobile Menu Toggle */}
+          <button
+            onClick={onMobileMenuClick}
+            className="md:hidden p-1 -ml-2 text-slate-500 hover:text-orange-500 flex-shrink-0"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <Link
+            to="/"
+            className="flex items-center gap-1 text-slate-500 hover:text-orange-500 transition-colors flex-shrink-0"
           >
             <Home className="h-4 w-4" />
-            <span>Trang chủ</span>
+            <span className="hidden md:inline">Trang chủ</span>
           </Link>
-          
+
           {breadcrumbItems.map((item, index) => (
-            <div key={`${location.pathname}-${index}`} className="flex items-center gap-2">
-              <ChevronRight className="h-4 w-4 text-slate-400" />
+            <div key={`${location.pathname}-${index}`} className="flex items-center gap-2 min-w-0">
+              <ChevronRight className="h-4 w-4 text-slate-400 flex-shrink-0" />
               {item.isLast ? (
-                <span className="text-slate-800 font-medium">{item.name}</span>
+                <span className="text-slate-800 font-medium truncate">{item.name}</span>
               ) : (
-                <Link 
+                <Link
                   to={item.path}
-                  className="text-slate-500 hover:text-orange-500 transition-colors"
+                  className="text-slate-500 hover:text-orange-500 transition-colors whitespace-nowrap hidden md:block"
                 >
                   {item.name}
                 </Link>
@@ -142,7 +153,7 @@ export default function Breadcrumb() {
         </nav>
 
         {/* Shop Selector */}
-        <div className="w-64">
+        <div className="md:w-64 flex-shrink-0">
           <ShopSelector />
         </div>
       </div>
