@@ -32,6 +32,7 @@ import OrdersPage from '@/pages/OrdersPage';
 import ReviewsPage from '@/pages/ReviewsPage';
 import ReviewsAutoReplyPage from '@/pages/ReviewsAutoReplyPage';
 import AdsPage from '@/pages/AdsPage';
+import AdsHistoryPage from '@/pages/AdsHistoryPage';
 import ApiResponsePage from '@/pages/ApiResponsePage';
 
 function App() {
@@ -76,6 +77,7 @@ function App() {
 
                   <Route path="/flash-sale/auto-setup" element={<FlashSaleAutoSetupPage />} />
                   <Route path="/ads" element={<AdsPage />} />
+                  <Route path="/ads/history" element={<AdsHistoryPage />} />
                   {/* Settings Routes */}
                   <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
                   <Route path="/settings/profile" element={<ProfileSettingsPage />} />

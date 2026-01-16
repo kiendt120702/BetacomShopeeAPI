@@ -78,8 +78,11 @@ const menuItems: MenuItem[] = [
   {
     title: 'Quảng cáo',
     icon: Megaphone,
-    path: '/ads',
     permissionKey: 'ads',
+    children: [
+      { title: 'Quản lý quảng cáo', icon: Megaphone, path: '/ads', permissionKey: 'ads' },
+      { title: 'Lịch sử', icon: Zap, path: '/ads/history', permissionKey: 'ads' },
+    ],
   },
   {
     title: 'Cài đặt',
@@ -96,7 +99,10 @@ const menuItems: MenuItem[] = [
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
   const { user, profile, signOut } = useAuth();
-  const [expandedMenus, setExpandedMenus] = useState<string[]>(['Cài đặt']);
+  // Mặc định mở tất cả các dropdown menu có children
+  const [expandedMenus, setExpandedMenus] = useState<string[]>(() => 
+    menuItems.filter(item => item.children).map(item => item.title)
+  );
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Kiểm tra user hiện tại có phải admin không

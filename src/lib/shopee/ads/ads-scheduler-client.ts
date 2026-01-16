@@ -15,6 +15,8 @@ export interface ScheduledAdsBudget {
   ad_type: 'auto' | 'manual';
   hour_start: number;
   hour_end: number;
+  minute_start?: number;  // Phút bắt đầu (0-59)
+  minute_end?: number;    // Phút kết thúc (0-59)
   budget: number;
   days_of_week?: number[] | null;
   specific_dates?: string[] | null;
@@ -43,6 +45,8 @@ export interface CreateScheduleParams {
   ad_type: 'auto' | 'manual';
   hour_start: number;
   hour_end: number;
+  minute_start?: number;  // Phút bắt đầu (0-59)
+  minute_end?: number;    // Phút kết thúc (0-59)
   budget: number;
   days_of_week?: number[];
   specific_dates?: string[];
@@ -136,11 +140,16 @@ export async function runScheduleNow(shopId: number, scheduleId: string) {
 // ==================== HELPER FUNCTIONS ====================
 
 /**
- * Format giờ hiển thị
+ * Format giờ hiển thị (bao gồm phút)
  */
-export function formatHourRange(start: number, end: number): string {
-  const formatHour = (h: number) => `${h.toString().padStart(2, '0')}:00`;
-  return `${formatHour(start)} - ${end === 24 ? '23:59' : formatHour(end)}`;
+export function formatHourRange(hourStart: number, hourEnd: number, minuteStart?: number, minuteEnd?: number): string {
+  const formatTime = (h: number, m: number = 0) => 
+    `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  
+  const start = formatTime(hourStart, minuteStart || 0);
+  const end = hourEnd === 24 ? '23:59' : formatTime(hourEnd, minuteEnd || 0);
+  
+  return `${start} - ${end}`;
 }
 
 /**

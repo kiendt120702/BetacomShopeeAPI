@@ -18,6 +18,7 @@ const routeNames: Record<string, string> = {
   'auto-history': 'Lịch sử',
   'detail': 'Chi tiết',
   'ads': 'Quảng cáo',
+  'history': 'Lịch sử quảng cáo',
   'settings': 'Cài đặt',
   'profile': 'Hồ sơ',
   'shops': 'Quản lý Shop',
@@ -83,6 +84,7 @@ function getSegmentName(segment: string, prevSegment?: string, isLast?: boolean,
 const virtualParentRoutes: Record<string, { parentName: string; childName: string }> = {
   'reviews': { parentName: 'Đánh giá', childName: 'Quản lý đánh giá' },
   'flash-sale': { parentName: 'Flash Sale', childName: 'Danh sách' },
+  'ads': { parentName: 'Quảng cáo', childName: 'Quản lý' },
 };
 
 export default function Breadcrumb() {

@@ -71,7 +71,7 @@ async function editCampaignBudget(
     const { access_token, partner_id, partner_key } = shop;
 
     if (!access_token || !partner_id || !partner_key) {
-      return { success: false, error: 'Missing shop credentials' };
+      return { success: false, error: 'Thiếu thông tin xác thực shop (access_token/partner_id/partner_key)' };
     }
 
     const apiPath = adType === 'manual'
@@ -98,7 +98,7 @@ async function editCampaignBudget(
       budget: budget,
     };
 
-    console.log(`[ads-scheduler] Editing campaign ${campaignId} budget to ${budget}`);
+    console.log(`[ads-scheduler] Editing campaign ${campaignId} (${adType}) budget to ${budget}`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -108,13 +108,40 @@ async function editCampaignBudget(
 
     const result = await response.json();
 
+    console.log(`[ads-scheduler] Shopee API response:`, JSON.stringify(result));
+
+    // Kiểm tra lỗi từ Shopee API
     if (result.error && result.error !== '' && result.error !== '-') {
-      return { success: false, error: result.message || result.error };
+      const errorCode = result.error;
+      const errorMsg = result.message || result.error;
+      
+      // Map các error code phổ biến sang tiếng Việt
+      const errorMessages: Record<string, string> = {
+        'error_auth': 'Lỗi xác thực - Token hết hạn hoặc không hợp lệ',
+        'error_param': 'Tham số không hợp lệ',
+        'error_permission': 'Không có quyền thực hiện thao tác này',
+        'error_server': 'Lỗi server Shopee',
+        'error_not_found': 'Không tìm thấy chiến dịch',
+        'ads.error_budget_too_low': 'Ngân sách quá thấp (tối thiểu 100.000đ)',
+        'ads.error_budget_too_high': 'Ngân sách vượt quá giới hạn cho phép',
+        'ads.error_campaign_not_found': 'Không tìm thấy chiến dịch quảng cáo',
+        'ads.error_campaign_status': 'Trạng thái chiến dịch không cho phép thay đổi ngân sách',
+      };
+
+      const friendlyError = errorMessages[errorCode] || `${errorMsg} (code: ${errorCode})`;
+      return { success: false, error: friendlyError };
+    }
+
+    // Kiểm tra response có data không
+    if (!result.response) {
+      return { success: false, error: 'Shopee API không trả về dữ liệu response' };
     }
 
     return { success: true };
   } catch (err) {
-    return { success: false, error: (err as Error).message };
+    const errorMessage = (err as Error).message;
+    console.error(`[ads-scheduler] Error editing campaign ${campaignId}:`, errorMessage);
+    return { success: false, error: `Lỗi hệ thống: ${errorMessage}` };
   }
 }
 
@@ -131,7 +158,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     switch (action) {
-      // Tạo cấu hình lịch ngân sách mới
+      // Tạo cấu hình lịch ngân sách mới (hoặc update nếu đã tồn tại)
       case 'create': {
         const { campaign_id, campaign_name, ad_type, hour_start, hour_end, budget, days_of_week, specific_dates } = params;
 
@@ -142,9 +169,10 @@ serve(async (req) => {
           );
         }
 
+        // Dùng upsert để tự động update nếu đã tồn tại schedule với cùng shop_id, campaign_id, hour_start, hour_end
         const { data, error } = await supabase
           .from('apishopee_scheduled_ads_budget')
-          .insert({
+          .upsert({
             shop_id,
             campaign_id,
             campaign_name: campaign_name || null,
@@ -155,6 +183,9 @@ serve(async (req) => {
             days_of_week: days_of_week || null,
             specific_dates: specific_dates || null,
             is_active: true,
+          }, {
+            onConflict: 'shop_id,campaign_id,hour_start,hour_end',
+            ignoreDuplicates: false, // Update nếu đã tồn tại
           })
           .select()
           .single();
@@ -263,18 +294,20 @@ serve(async (req) => {
         );
       }
 
-      // Xử lý điều chỉnh ngân sách (gọi bởi cron mỗi giờ)
+      // Xử lý điều chỉnh ngân sách (gọi bởi cron mỗi 30 phút)
       case 'process': {
         // Chuyển sang timezone Việt Nam (UTC+7)
         const now = new Date();
         const vnTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
         const currentHour = vnTime.getHours();
+        const currentMinute = vnTime.getMinutes();
         const currentDay = vnTime.getDay(); // 0 = Sunday
         const today = vnTime.toISOString().split('T')[0]; // YYYY-MM-DD
 
-        console.log(`[ads-scheduler] Processing at hour ${currentHour}, day ${currentDay}, date ${today}`);
+        console.log(`[ads-scheduler] Processing at hour ${currentHour}:${currentMinute}, day ${currentDay}, date ${today}`);
 
         // Lấy tất cả cấu hình active phù hợp với giờ hiện tại
+        // hour_start và hour_end được lưu dưới dạng giờ (0-23)
         const { data: schedules, error: scheduleError } = await supabase
           .from('apishopee_scheduled_ads_budget')
           .select('*')
@@ -290,7 +323,7 @@ serve(async (req) => {
         }
 
         // Lọc theo ngày trong tuần hoặc ngày cụ thể
-        const applicableSchedules = (schedules || []).filter(s => {
+        const applicableSchedules = (schedules || []).filter((s: any) => {
           // Nếu có specific_dates, kiểm tra ngày hôm nay
           if (s.specific_dates && s.specific_dates.length > 0) {
             return s.specific_dates.includes(today);
@@ -299,13 +332,13 @@ serve(async (req) => {
           if (s.days_of_week && s.days_of_week.length > 0 && s.days_of_week.length < 7) {
             return s.days_of_week.includes(currentDay);
           }
-          // Mặc định áp dụng tất cả các ngày
+          // Mặc định áp dụng tất cả các ngày (hàng ngày)
           return true;
         });
 
         console.log(`[ads-scheduler] Found ${applicableSchedules.length} applicable schedules`);
 
-        const results = [];
+        const results: Array<{schedule_id: string; campaign_id: number; budget: number; success: boolean; error?: string}> = [];
 
         for (const schedule of applicableSchedules) {
           const result = await editCampaignBudget(
@@ -341,6 +374,7 @@ serve(async (req) => {
             success: true,
             processed: results.length,
             hour: currentHour,
+            minute: currentMinute,
             day: currentDay,
             date: today,
             results,

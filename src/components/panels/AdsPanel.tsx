@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { RefreshCw, Play, Trash2, Clock, History, Settings, FileJson, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, Play, Trash2, Clock, History, Settings, FileJson, Wifi, WifiOff, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -39,10 +39,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import {
   deleteBudgetSchedule,
-  runScheduleNow,
-  formatHourRange,
-  formatDaysOfWeek,
-  getNext14Days,
+  createBudgetSchedule,
   getCampaignIdList,
   getCampaignSettingInfo,
   type ScheduledAdsBudget,
@@ -110,7 +107,7 @@ interface PerformanceData {
   daily: any[];
 }
 
-type TabType = 'manage' | 'schedule' | 'saved' | 'history';
+type TabType = 'manage' | 'history';
 
 // ==================== CONSTANTS ====================
 
@@ -179,9 +176,6 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
 
   // State
   const [loading, setLoading] = useState(false);
-  const [schedules, setSchedules] = useState<ScheduledAdsBudget[]>([]);
-  const [logs, setLogs] = useState<AdsBudgetLog[]>([]);
-  const [activeTab, setActiveTab] = useState<TabType>('manage');
   
   // Expanded campaign state
   const [expandedCampaignId, setExpandedCampaignId] = useState<number | null>(null);
@@ -190,17 +184,14 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
   const [showApiResponse, setShowApiResponse] = useState(false);
   const [apiResponses, setApiResponses] = useState<Record<string, any>>({});
 
-  // Schedule creation state
-  const [selectedCampaigns, setSelectedCampaigns] = useState<number[]>([]);
-  const [bulkHours, setBulkHours] = useState<number[]>([]);
-  const [scheduleType, setScheduleType] = useState<'daily' | 'specific'>('daily');
-  const [selectedDates, setSelectedDates] = useState<string[]>([]);
-  const [showBulkDialog, setShowBulkDialog] = useState(false);
-  const [budgetValue, setBudgetValue] = useState('');
-
-  // Delete dialog
-  const [deleteScheduleId, setDeleteScheduleId] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  // Auto ADS dialog state
+  const [showAutoAdsDialog, setShowAutoAdsDialog] = useState(false);
+  const [autoAdsSelectedCampaigns, setAutoAdsSelectedCampaigns] = useState<number[]>([]);
+  const [autoAdsTimeSlots, setAutoAdsTimeSlots] = useState<number[]>([]);
+  const [autoAdsBudget, setAutoAdsBudget] = useState('');
+  const [autoAdsDateType, setAutoAdsDateType] = useState<'daily' | 'specific'>('daily');
+  const [autoAdsSpecificDates, setAutoAdsSpecificDates] = useState<string[]>([]);
+  const [autoAdsProcessing, setAutoAdsProcessing] = useState<'increase' | 'decrease' | null>(null);
 
   // Show realtime error
   useEffect(() => {
@@ -211,40 +202,11 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
 
   // ==================== DATA LOADING ====================
 
-  useEffect(() => {
-    if (shopId) {
-      loadSchedules();
-      loadLogs();
-    }
-  }, [shopId]);
-
   // Clear expanded campaign và hourly data khi đổi date
   useEffect(() => {
     setExpandedCampaignId(null);
     setCampaignHourlyData({});
   }, [selectedDate, dateRange]);
-
-  // Load schedules từ database
-  const loadSchedules = async () => {
-    const { data } = await supabase
-      .from('apishopee_scheduled_ads_budget')
-      .select('*')
-      .eq('shop_id', shopId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
-    setSchedules((data || []) as ScheduledAdsBudget[]);
-  };
-
-  // Load logs từ database
-  const loadLogs = async () => {
-    const { data } = await supabase
-      .from('apishopee_ads_budget_logs')
-      .select('*')
-      .eq('shop_id', shopId)
-      .order('executed_at', { ascending: false })
-      .limit(50);
-    setLogs((data || []) as AdsBudgetLog[]);
-  };
 
   // Sync từ Shopee API (manual trigger) - Gọi Edge Function
   const handleSyncFromAPI = async () => {
@@ -338,99 +300,165 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
     }
   };
 
-  // ==================== SCHEDULE ACTIONS ====================
+  // ==================== AUTO ADS HANDLER ====================
 
-  const saveBulkSchedule = async () => {
-    if (selectedCampaigns.length === 0 || bulkHours.length === 0) return;
-
-    const budget = parseFloat(budgetValue.replace(/\./g, ''));
-    if (isNaN(budget) || budget < 0) {
-      toast({ title: 'Ngân sách không hợp lệ', variant: 'destructive' });
+  /**
+   * Xử lý Tự động ADS - Tạo schedule để cron job thực thi
+   * @param action 'increase' | 'decrease' - Hành động tăng hoặc giảm (dùng để validate)
+   */
+  const handleAutoAds = async (action: 'increase' | 'decrease') => {
+    // Validation
+    if (autoAdsSelectedCampaigns.length === 0) {
+      toast({ title: 'Lỗi', description: 'Vui lòng chọn ít nhất 1 chiến dịch', variant: 'destructive' });
       return;
     }
 
-    try {
-      const records = selectedCampaigns.map(cid => {
-        const campaign = campaigns.find(c => c.campaign_id === cid);
-        return {
-          shop_id: shopId,
-          campaign_id: cid,
-          campaign_name: campaign?.name || '',
-          ad_type: campaign?.ad_type || 'auto',
-          hour_start: Math.min(...bulkHours),
-          hour_end: Math.max(...bulkHours) + 1,
-          budget,
-          days_of_week: scheduleType === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : null,
-          specific_dates: scheduleType === 'specific' ? selectedDates : null,
-          is_active: true,
-        };
-      });
-
-      const { error } = await supabase
-        .from('apishopee_scheduled_ads_budget')
-        .insert(records);
-
-      if (error) throw error;
-
-      toast({ title: 'Thành công', description: `Đã tạo lịch cho ${selectedCampaigns.length} chiến dịch` });
-      setShowBulkDialog(false);
-      setSelectedCampaigns([]);
-      setBulkHours([]);
-      setSelectedDates([]);
-      setBudgetValue('');
-      loadSchedules();
-    } catch (e) {
-      toast({ title: 'Lỗi', description: (e as Error).message, variant: 'destructive' });
+    if (autoAdsTimeSlots.length === 0) {
+      toast({ title: 'Lỗi', description: 'Vui lòng chọn khung thời gian', variant: 'destructive' });
+      return;
     }
-  };
 
-  const handleDeleteSchedule = async () => {
-    if (!deleteScheduleId) return;
-    setIsDeleting(true);
+    const budget = parseFloat(autoAdsBudget.replace(/\./g, ''));
+    if (isNaN(budget) || budget < 100000) {
+      toast({ title: 'Lỗi', description: 'Ngân sách tối thiểu là 100.000đ', variant: 'destructive' });
+      return;
+    }
+
+    // Validate date selection for specific dates
+    if (autoAdsDateType === 'specific' && autoAdsSpecificDates.length === 0) {
+      toast({ title: 'Lỗi', description: 'Vui lòng chọn ít nhất 1 ngày cụ thể', variant: 'destructive' });
+      return;
+    }
+
+    // Validate ngân sách nhập so với ngân sách hiện tại của các chiến dịch
+    const invalidCampaigns: string[] = [];
+    for (const campaignId of autoAdsSelectedCampaigns) {
+      const campaign = campaigns.find(c => c.campaign_id === campaignId);
+      if (!campaign) continue;
+      
+      const currentBudget = campaign.campaign_budget || 0;
+      
+      if (action === 'increase' && budget <= currentBudget) {
+        invalidCampaigns.push(`"${campaign.name || campaignId}" (hiện tại: ${new Intl.NumberFormat('vi-VN').format(currentBudget)}đ)`);
+      } else if (action === 'decrease' && budget >= currentBudget) {
+        invalidCampaigns.push(`"${campaign.name || campaignId}" (hiện tại: ${new Intl.NumberFormat('vi-VN').format(currentBudget)}đ)`);
+      }
+    }
+
+    if (invalidCampaigns.length > 0) {
+      const actionText = action === 'increase' ? 'lớn hơn' : 'nhỏ hơn';
+      toast({ 
+        title: 'Lỗi ngân sách', 
+        description: `Ngân sách nhập phải ${actionText} ngân sách hiện tại của: ${invalidCampaigns.slice(0, 3).join(', ')}${invalidCampaigns.length > 3 ? ` và ${invalidCampaigns.length - 3} chiến dịch khác` : ''}`, 
+        variant: 'destructive' 
+      });
+      return;
+    }
+
+    setAutoAdsProcessing(action);
+
     try {
-      const result = await deleteBudgetSchedule(shopId, deleteScheduleId);
-      if (!result.success) throw new Error(result.error);
-      toast({ title: 'Đã xóa lịch' });
-      loadSchedules();
+      // Tính khung giờ từ slot (mỗi slot = 30 phút)
+      const slot = autoAdsTimeSlots[0];
+      const hour = Math.floor(slot / 2);
+      const minute = (slot % 2) * 30;
+
+      // Tính ngày áp dụng
+      let daysOfWeek: number[] | null = null;
+      let specificDates: string[] | null = null;
+
+      switch (autoAdsDateType) {
+        case 'daily':
+          daysOfWeek = [0, 1, 2, 3, 4, 5, 6]; // Tất cả các ngày
+          break;
+        case 'specific':
+          specificDates = autoAdsSpecificDates;
+          break;
+      }
+
+      const results: { campaignId: number; success: boolean; error?: string }[] = [];
+
+      // Tạo schedule cho từng chiến dịch (KHÔNG gọi API ngay, cron job sẽ xử lý)
+      for (const campaignId of autoAdsSelectedCampaigns) {
+        const campaign = campaigns.find(c => c.campaign_id === campaignId);
+        if (!campaign) continue;
+
+        const adType = campaign.ad_type as 'auto' | 'manual';
+
+        try {
+          // Chỉ tạo schedule, cron job sẽ kiểm tra và gọi API khi đến giờ
+          // Gửi cả minute_start và minute_end để lưu khung giờ chi tiết
+          const result = await createBudgetSchedule({
+            shop_id: shopId,
+            campaign_id: campaignId,
+            campaign_name: campaign.name || '',
+            ad_type: adType,
+            hour_start: hour,
+            hour_end: hour + 1, // Khung 1 giờ
+            minute_start: minute, // Phút bắt đầu (0 hoặc 30)
+            minute_end: minute,   // Phút kết thúc
+            budget: budget,
+            days_of_week: daysOfWeek || undefined,
+            specific_dates: specificDates || undefined,
+          });
+
+          if (result.success) {
+            results.push({ campaignId, success: true });
+          } else {
+            results.push({ campaignId, success: false, error: result.error });
+          }
+        } catch (err) {
+          results.push({ campaignId, success: false, error: (err as Error).message });
+        }
+      }
+
+      // Hiển thị kết quả
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      const timeLabel = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+      const dateLabel = autoAdsDateType === 'daily' 
+        ? 'hàng ngày' 
+        : `${autoAdsSpecificDates.length} ngày cụ thể`;
+
+      if (successCount > 0 && failCount === 0) {
+        toast({
+          title: 'Đã lên lịch thành công',
+          description: `${successCount} chiến dịch sẽ ${action === 'increase' ? 'tăng' : 'giảm'} ngân sách lên ${new Intl.NumberFormat('vi-VN').format(budget)}đ vào ${timeLabel} ${dateLabel}`,
+        });
+      } else if (successCount > 0 && failCount > 0) {
+        toast({
+          title: 'Hoàn thành một phần',
+          description: `Đã lên lịch: ${successCount}, Thất bại: ${failCount}`,
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Lỗi',
+          description: `Không thể tạo lịch. ${results[0]?.error || ''}`,
+          variant: 'destructive',
+        });
+      }
+
+      // Reset form và đóng dialog
+      if (successCount > 0) {
+        setShowAutoAdsDialog(false);
+        setAutoAdsSelectedCampaigns([]);
+        setAutoAdsTimeSlots([]);
+        setAutoAdsBudget('');
+        setAutoAdsDateType('daily');
+        setAutoAdsSpecificDates([]);
+      }
     } catch (e) {
       toast({ title: 'Lỗi', description: (e as Error).message, variant: 'destructive' });
     } finally {
-      setIsDeleting(false);
-      setDeleteScheduleId(null);
-    }
-  };
-
-  const handleRunNow = async (scheduleId: string) => {
-    try {
-      const result = await runScheduleNow(shopId, scheduleId);
-      if (!result.success) throw new Error(result.error);
-      toast({ title: 'Thành công', description: 'Đã áp dụng ngân sách' });
-      loadLogs();
-    } catch (e) {
-      toast({ title: 'Lỗi', description: (e as Error).message, variant: 'destructive' });
+      setAutoAdsProcessing(null);
     }
   };
 
   // ==================== CAMPAIGN EXPANSION ====================
 
   // (Moved to toggleCampaignExpansion above)
-
-  // ==================== SCHEDULE BUILDER HELPERS ====================
-
-  const toggleCampaignSelection = (cid: number) => {
-    setSelectedCampaigns(prev =>
-      prev.includes(cid) ? prev.filter(x => x !== cid) : [...prev, cid]
-    );
-  };
-
-  const toggleBulkHour = (h: number) => {
-    setBulkHours(prev =>
-      prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h].sort((a, b) => a - b)
-    );
-  };
-
-  const hasScheduleAtHour = (cid: number, h: number) =>
-    schedules.some(s => s.campaign_id === cid && h >= s.hour_start && h < s.hour_end);
 
   // ==================== API RESPONSE FUNCTIONS ====================
 
@@ -618,6 +646,10 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
                 </span>
               )}
             </div>
+            <Button variant="outline" size="sm" onClick={() => setShowAutoAdsDialog(true)} disabled={loading || syncing}>
+              <Zap className="h-4 w-4 mr-2" />
+              Tự động ADS
+            </Button>
             <Button variant="outline" size="sm" onClick={fetchAllApiResponses} disabled={loading || syncing}>
               <FileJson className="h-4 w-4 mr-2" />
               Response
@@ -627,40 +659,15 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
               {syncing ? 'Đang đồng bộ...' : 'Đồng bộ từ Shopee'}
             </Button>
           </div>
-
-          {/* Tabs */}
-          <div className="flex border-b px-4">
-            {([
-              { key: 'manage', label: 'Quản lý', icon: Settings },
-              { key: 'schedule', label: 'Lịch ngân sách', icon: Clock },
-              { key: 'saved', label: `Đã lưu (${schedules.length})`, icon: Clock },
-              { key: 'history', label: 'Lịch sử', icon: History },
-            ] as const).map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={cn(
-                  "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 transition-colors",
-                  activeTab === tab.key
-                    ? "border-orange-500 text-orange-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                )}
-              >
-                <tab.icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Content */}
         <div className="p-4 min-h-[400px]">
           {/* Tab: Quản lý */}
-          {activeTab === 'manage' && (
-            <div className="space-y-4 relative">
-              {(realtimeLoading || isFetching) && campaigns.length === 0 && (
-                <div className="absolute inset-0 bg-white/60 backdrop-blur-sm z-10 flex items-center justify-center rounded-lg">
-                  <div className="flex flex-col items-center gap-2">
+          <div className="space-y-4 relative">
+            {(realtimeLoading || isFetching) && campaigns.length === 0 && (
+              <div className="absolute inset-0 bg-white/60 backdrop-blur-sm z-10 flex items-center justify-center rounded-lg">
+                <div className="flex flex-col items-center gap-2">
                     <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
                     <p className="text-sm text-gray-600 font-medium">Đang tải dữ liệu từ DB...</p>
                   </div>
@@ -682,97 +689,8 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
                 selectedDate={selectedDate}
               />
             </div>
-          )}
 
-          {/* Tab: Lịch ngân sách */}
-          {activeTab === 'schedule' && (
-            <ScheduleBuilder
-              campaigns={campaigns}
-              selectedCampaigns={selectedCampaigns}
-              toggleCampaignSelection={toggleCampaignSelection}
-              bulkHours={bulkHours}
-              toggleBulkHour={toggleBulkHour}
-              scheduleType={scheduleType}
-              setScheduleType={setScheduleType}
-              selectedDates={selectedDates}
-              setSelectedDates={setSelectedDates}
-              schedules={schedules}
-              onOpenDialog={() => setShowBulkDialog(true)}
-              hasScheduleAtHour={hasScheduleAtHour}
-            />
-          )}
-
-          {/* Tab: Đã lưu */}
-          {activeTab === 'saved' && (
-            <SavedSchedules
-              schedules={schedules}
-              onDelete={setDeleteScheduleId}
-              onRunNow={handleRunNow}
-            />
-          )}
-
-          {/* Tab: Lịch sử */}
-          {activeTab === 'history' && (
-            <BudgetHistory logs={logs} onRefresh={loadLogs} />
-          )}
         </div>
-
-        {/* Bulk Schedule Dialog */}
-        <Dialog open={showBulkDialog} onOpenChange={setShowBulkDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Thiết lập ngân sách cho {selectedCampaigns.length} chiến dịch</DialogTitle>
-            </DialogHeader>
-            <div className="py-4 space-y-4">
-              <div>
-                <p className="text-sm text-gray-600 mb-1">Khung giờ:</p>
-                <p className="font-medium text-orange-600">
-                  {bulkHours.length > 0
-                    ? `${Math.min(...bulkHours).toString().padStart(2, '0')}:00 - ${(Math.max(...bulkHours) + 1).toString().padStart(2, '0')}:00`
-                    : 'Chưa chọn'}
-                </p>
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Ngân sách (VNĐ)</label>
-                <Input
-                  type="text"
-                  value={budgetValue ? new Intl.NumberFormat('vi-VN').format(Number(budgetValue.replace(/\./g, '')) || 0) : ''}
-                  onChange={e => {
-                    const raw = e.target.value.replace(/\./g, '').replace(/\D/g, '');
-                    setBudgetValue(raw);
-                  }}
-                  placeholder="Nhập ngân sách"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowBulkDialog(false)}>Hủy</Button>
-              <Button onClick={saveBulkSchedule} disabled={!budgetValue}>Lưu</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Delete Confirmation Dialog */}
-        <AlertDialog open={!!deleteScheduleId} onOpenChange={() => setDeleteScheduleId(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Xác nhận xóa</AlertDialogTitle>
-              <AlertDialogDescription>
-                Bạn có chắc muốn xóa lịch ngân sách này? Hành động này không thể hoàn tác.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isDeleting}>Hủy</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleDeleteSchedule}
-                disabled={isDeleting}
-                className="bg-red-500 hover:bg-red-600"
-              >
-                {isDeleting ? 'Đang xóa...' : 'Xóa'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
 
         {/* API Response Panel */}
         {showApiResponse && (
@@ -811,6 +729,321 @@ export function AdsPanel({ shopId, userId }: AdsPanelProps) {
             </DialogContent>
           </Dialog>
         )}
+
+        {/* Auto ADS Dialog */}
+        <Dialog open={showAutoAdsDialog} onOpenChange={setShowAutoAdsDialog}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5 text-orange-500" />
+                Tự động ADS - Cấu hình chiến dịch
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-auto py-4">
+              <div className="grid grid-cols-2 gap-6">
+                {/* Cột trái: Danh sách chiến dịch đang chạy */}
+                <div className="border rounded-lg p-4">
+                  <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                    <Play className="h-4 w-4 text-green-500" />
+                    Chiến dịch đang chạy ({campaigns.length})
+                  </h3>
+                  <div className="space-y-2 max-h-[400px] overflow-auto">
+                    {campaigns.length === 0 ? (
+                      <p className="text-sm text-gray-500 text-center py-4">
+                        Không có chiến dịch nào đang chạy
+                      </p>
+                    ) : (
+                      campaigns.map((campaign) => (
+                        <label
+                          key={campaign.campaign_id}
+                          className={cn(
+                            "flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all",
+                            autoAdsSelectedCampaigns.includes(campaign.campaign_id)
+                              ? "border-orange-500 bg-orange-50"
+                              : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={autoAdsSelectedCampaigns.includes(campaign.campaign_id)}
+                            onChange={() => {
+                              setAutoAdsSelectedCampaigns(prev =>
+                                prev.includes(campaign.campaign_id)
+                                  ? prev.filter(id => id !== campaign.campaign_id)
+                                  : [...prev, campaign.campaign_id]
+                              );
+                            }}
+                            className="w-4 h-4 text-orange-500 rounded border-gray-300 focus:ring-orange-500"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{campaign.name}</p>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className={cn(
+                                "text-xs px-2 py-0.5 rounded-full",
+                                AD_TYPE_MAP[campaign.ad_type]?.color || 'bg-gray-100 text-gray-600'
+                              )}>
+                                {AD_TYPE_MAP[campaign.ad_type]?.label || campaign.ad_type}
+                              </span>
+                              {campaign.performance && (
+                                <span className="text-xs text-gray-500">
+                                  ROAS: {campaign.performance.roas?.toFixed(2) || '0.00'}
+                                </span>
+                              )}
+                              <span className="text-xs text-orange-600 font-medium">
+                                NS: {campaign.campaign_budget 
+                                  ? new Intl.NumberFormat('vi-VN').format(campaign.campaign_budget) + 'đ'
+                                  : '--'}
+                              </span>
+                            </div>
+                          </div>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  {campaigns.length > 0 && (
+                    <div className="mt-3 pt-3 border-t flex items-center justify-between">
+                      <button
+                        onClick={() => {
+                          if (autoAdsSelectedCampaigns.length === campaigns.length) {
+                            setAutoAdsSelectedCampaigns([]);
+                          } else {
+                            setAutoAdsSelectedCampaigns(campaigns.map(c => c.campaign_id));
+                          }
+                        }}
+                        className="text-xs text-orange-600 hover:text-orange-700 font-medium"
+                      >
+                        {autoAdsSelectedCampaigns.length === campaigns.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                      </button>
+                      <span className="text-xs text-gray-500">
+                        Đã chọn: {autoAdsSelectedCampaigns.length}/{campaigns.length}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Cột phải: Khung thời gian */}
+                <div className="border rounded-lg p-4">
+                  {/* Dropdown chọn ngày */}
+                  <div className="mb-4">
+                    <label className="text-xs font-medium text-gray-700 mb-2 block">Chọn ngày áp dụng</label>
+                    <select
+                      value={autoAdsDateType}
+                      onChange={(e) => {
+                        setAutoAdsDateType(e.target.value as 'daily' | 'specific');
+                        if (e.target.value !== 'specific') {
+                          setAutoAdsSpecificDates([]);
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="daily">Hàng ngày</option>
+                      <option value="specific">Ngày cụ thể</option>
+                    </select>
+                  </div>
+
+                  {/* Bảng chọn ngày cụ thể */}
+                  {autoAdsDateType === 'specific' && (
+                    <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                      <p className="text-xs text-gray-600 mb-2">Chọn các ngày:</p>
+                      <div className="grid grid-cols-7 gap-1">
+                        {Array.from({ length: 14 }, (_, i) => {
+                          const date = new Date();
+                          date.setDate(date.getDate() + i);
+                          const dateStr = date.toISOString().split('T')[0];
+                          const dayOfWeek = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][date.getDay()];
+                          const isSelected = autoAdsSpecificDates.includes(dateStr);
+                          return (
+                            <button
+                              key={dateStr}
+                              onClick={() => {
+                                setAutoAdsSpecificDates(prev =>
+                                  prev.includes(dateStr)
+                                    ? prev.filter(d => d !== dateStr)
+                                    : [...prev, dateStr].sort()
+                                );
+                              }}
+                              className={cn(
+                                "p-1.5 rounded text-[10px] font-medium transition-all flex flex-col items-center",
+                                isSelected
+                                  ? "bg-blue-500 text-white"
+                                  : "bg-white border border-gray-200 hover:border-blue-300 text-gray-600"
+                              )}
+                            >
+                              <span className="text-[8px] opacity-70">{dayOfWeek}</span>
+                              <span>{date.getDate()}/{date.getMonth() + 1}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {autoAdsSpecificDates.length > 0 && (
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-xs text-gray-500">
+                            Đã chọn: {autoAdsSpecificDates.length} ngày
+                          </span>
+                          <button
+                            onClick={() => setAutoAdsSpecificDates([])}
+                            className="text-xs text-red-500 hover:text-red-600"
+                          >
+                            Xóa tất cả
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-blue-500" />
+                    Khung thời gian chạy ADS
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Chọn khung giờ áp dụng
+                  </p>
+                  <div className="grid grid-cols-8 gap-1.5 max-h-[280px] overflow-auto">
+                    {Array.from({ length: 48 }, (_, slot) => {
+                      const hour = Math.floor(slot / 2);
+                      const minute = (slot % 2) * 30;
+                      const timeLabel = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                      const isSelected = autoAdsTimeSlots[0] === slot;
+                      return (
+                        <button
+                          key={slot}
+                          onClick={() => {
+                            // Chỉ cho chọn 1 khung giờ
+                            setAutoAdsTimeSlots(isSelected ? [] : [slot]);
+                          }}
+                          className={cn(
+                            "p-1.5 rounded-lg border text-[10px] font-medium transition-all",
+                            isSelected
+                              ? "bg-blue-500 text-white border-blue-500 shadow-md"
+                              : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:bg-blue-50"
+                          )}
+                        >
+                          {timeLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Ngân sách */}
+                  <div className="mt-4 pt-3 border-t">
+                    <label className="text-xs font-medium text-gray-700 mb-2 block">
+                      Ngân sách (VNĐ) <span className="text-gray-400 font-normal">- Tối thiểu 100.000đ</span>
+                    </label>
+                    <Input
+                      type="text"
+                      value={autoAdsBudget ? new Intl.NumberFormat('vi-VN').format(Number(autoAdsBudget.replace(/\./g, '')) || 0) : ''}
+                      onChange={e => {
+                        const raw = e.target.value.replace(/\./g, '').replace(/\D/g, '');
+                        setAutoAdsBudget(raw);
+                      }}
+                      placeholder="Tối thiểu 100.000"
+                      className="text-sm"
+                    />
+                    {autoAdsBudget && parseFloat(autoAdsBudget.replace(/\./g, '')) < 100000 && (
+                      <p className="text-xs text-red-500 mt-1">Ngân sách tối thiểu là 100.000đ</p>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+            </div>
+            <DialogFooter className="border-t pt-4">
+              <div className="flex items-center justify-between w-full">
+                <div className="text-sm text-gray-500">
+                  {(() => {
+                    const hasCampaigns = autoAdsSelectedCampaigns.length > 0;
+                    const hasTimeSlot = autoAdsTimeSlots.length === 1;
+                    const budgetValue = autoAdsBudget ? parseFloat(autoAdsBudget.replace(/\./g, '')) : 0;
+                    const hasBudget = budgetValue >= 100000;
+                    const hasValidDates = autoAdsDateType !== 'specific' || autoAdsSpecificDates.length > 0;
+                    
+                    const missing: string[] = [];
+                    if (!hasCampaigns) missing.push('chiến dịch');
+                    if (!hasValidDates) missing.push('ngày áp dụng');
+                    if (!hasTimeSlot) missing.push('khung giờ');
+                    if (!hasBudget) missing.push('ngân sách (tối thiểu 100.000đ)');
+                    
+                    if (missing.length === 0) {
+                      const slot = autoAdsTimeSlots[0];
+                      const hour = Math.floor(slot / 2);
+                      const minute = (slot % 2) * 30;
+                      const timeLabel = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                      return (
+                        <span className="text-green-600">
+                          ✓ {autoAdsSelectedCampaigns.length} chiến dịch | {timeLabel} | {new Intl.NumberFormat('vi-VN').format(budgetValue)}đ
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="text-red-500">
+                        ⚠ Thiếu: {missing.join(', ')}
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => {
+                      setShowAutoAdsDialog(false);
+                      setAutoAdsSelectedCampaigns([]);
+                      setAutoAdsTimeSlots([]);
+                      setAutoAdsBudget('');
+                      setAutoAdsDateType('daily');
+                      setAutoAdsSpecificDates([]);
+                    }}
+                    disabled={autoAdsProcessing !== null}
+                  >
+                    Hủy
+                  </Button>
+                  <Button 
+                    onClick={() => handleAutoAds('decrease')}
+                    disabled={
+                      autoAdsProcessing !== null ||
+                      autoAdsSelectedCampaigns.length === 0 || 
+                      autoAdsTimeSlots.length === 0 ||
+                      !autoAdsBudget ||
+                      parseFloat(autoAdsBudget.replace(/\./g, '')) < 100000 ||
+                      (autoAdsDateType === 'specific' && autoAdsSpecificDates.length === 0)
+                    }
+                    variant="outline"
+                    className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400"
+                  >
+                    {autoAdsProcessing === 'decrease' ? (
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                      </svg>
+                    )}
+                    Giảm
+                  </Button>
+                  <Button 
+                    onClick={() => handleAutoAds('increase')}
+                    disabled={
+                      autoAdsProcessing !== null ||
+                      autoAdsSelectedCampaigns.length === 0 || 
+                      autoAdsTimeSlots.length === 0 ||
+                      !autoAdsBudget ||
+                      parseFloat(autoAdsBudget.replace(/\./g, '')) < 100000 ||
+                      (autoAdsDateType === 'specific' && autoAdsSpecificDates.length === 0)
+                    }
+                    className="bg-green-500 hover:bg-green-600"
+                  >
+                    {autoAdsProcessing === 'increase' ? (
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                      </svg>
+                    )}
+                    Tăng
+                  </Button>
+                </div>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
@@ -1395,319 +1628,225 @@ function CampaignList({
   );
 }
 
-function ScheduleBuilder({
-  campaigns,
-  selectedCampaigns,
-  toggleCampaignSelection,
-  bulkHours,
-  toggleBulkHour,
-  scheduleType,
-  setScheduleType,
-  selectedDates,
-  setSelectedDates,
+// Component hiển thị lịch sử schedules và logs
+function AdsScheduleHistory({
   schedules,
-  onOpenDialog,
-  hasScheduleAtHour,
-}: {
-  campaigns: CampaignWithPerformance[];
-  selectedCampaigns: number[];
-  toggleCampaignSelection: (cid: number) => void;
-  bulkHours: number[];
-  toggleBulkHour: (h: number) => void;
-  scheduleType: 'daily' | 'specific';
-  setScheduleType: (t: 'daily' | 'specific') => void;
-  selectedDates: string[];
-  setSelectedDates: (d: string[] | ((prev: string[]) => string[])) => void;
-  schedules: ScheduledAdsBudget[];
-  onOpenDialog: () => void;
-  hasScheduleAtHour: (cid: number, h: number) => boolean;
-}) {
-  const next14Days = getNext14Days();
-
-  return (
-    <div className="space-y-4">
-      {/* Schedule Type Selection */}
-      <div className="flex items-center gap-4">
-        <span className="text-sm text-gray-600">Quy tắc:</span>
-        <button
-          onClick={() => setScheduleType('daily')}
-          className={cn("px-3 py-1 rounded-full text-sm transition-colors", scheduleType === 'daily' ? "bg-green-500 text-white" : "bg-gray-100 hover:bg-gray-200")}
-        >
-          Mỗi ngày
-        </button>
-        <button
-          onClick={() => setScheduleType('specific')}
-          className={cn("px-3 py-1 rounded-full text-sm transition-colors", scheduleType === 'specific' ? "bg-green-500 text-white" : "bg-gray-100 hover:bg-gray-200")}
-        >
-          Ngày chỉ định
-        </button>
-      </div>
-
-      {/* Date Selection (for specific dates) */}
-      {scheduleType === 'specific' && (
-        <div className="p-3 bg-white rounded-lg border">
-          <p className="text-sm text-gray-600 mb-2">Chọn ngày áp dụng:</p>
-          <div className="flex flex-wrap gap-2">
-            {next14Days.map(({ date, label, dayOfWeek }) => (
-              <button
-                key={date}
-                onClick={() => setSelectedDates(prev =>
-                  prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date].sort()
-                )}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-medium flex flex-col items-center min-w-[50px] transition-colors",
-                  selectedDates.includes(date) ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                )}
-              >
-                <span>{label}</span>
-                <span className="text-[10px] opacity-70">{dayOfWeek}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Hour Selection */}
-      <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium text-blue-800">
-            Chọn khung giờ: ({bulkHours.length > 0 ? `${Math.min(...bulkHours)}:00 - ${Math.max(...bulkHours) + 1}:00` : 'Chưa chọn'})
-          </span>
-        </div>
-        <div className="grid grid-cols-12 gap-1">
-          {Array.from({ length: 24 }, (_, h) => (
-            <button
-              key={h}
-              onClick={() => toggleBulkHour(h)}
-              className={cn(
-                "h-8 text-xs font-medium rounded transition-colors",
-                bulkHours.includes(h) ? "bg-blue-500 text-white" : "bg-white text-gray-600 hover:bg-blue-100"
-              )}
-            >
-              {h.toString().padStart(2, '0')}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Campaign Selection */}
-      <div className="p-3 bg-white rounded-lg border">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium">
-            Chọn chiến dịch: ({selectedCampaigns.length} đã chọn)
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                const allIds = campaigns.map(c => c.campaign_id);
-                if (selectedCampaigns.length === allIds.length) {
-                  // Deselect all
-                  allIds.forEach(id => {
-                    if (selectedCampaigns.includes(id)) toggleCampaignSelection(id);
-                  });
-                } else {
-                  // Select all
-                  allIds.forEach(id => {
-                    if (!selectedCampaigns.includes(id)) toggleCampaignSelection(id);
-                  });
-                }
-              }}
-              className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              {selectedCampaigns.length === campaigns.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-            </button>
-          </div>
-        </div>
-
-        <div className="space-y-2 max-h-[300px] overflow-auto">
-          {campaigns.map(c => {
-            const isSelected = selectedCampaigns.includes(c.campaign_id);
-            return (
-              <div
-                key={c.campaign_id}
-                className={cn(
-                  "flex items-center gap-3 p-2 rounded-lg border cursor-pointer transition-colors",
-                  isSelected ? "ring-2 ring-blue-500 bg-blue-50" : "hover:bg-gray-50"
-                )}
-                onClick={() => toggleCampaignSelection(c.campaign_id)}
-              >
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => {}}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{c.name || 'Campaign ' + c.campaign_id}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className={cn("text-xs px-1.5 py-0.5 rounded", AD_TYPE_MAP[c.ad_type]?.color)}>
-                      {AD_TYPE_MAP[c.ad_type]?.label}
-                    </span>
-                    <span className="text-xs text-gray-400">ID: {c.campaign_id}</span>
-                  </div>
-                </div>
-                <div className="text-sm font-medium text-orange-600">
-                  {c.campaign_budget ? formatPrice(c.campaign_budget) : '-'}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Action Button */}
-      {selectedCampaigns.length > 0 && bulkHours.length > 0 && (
-        <div className="flex justify-end">
-          <Button onClick={onOpenDialog} className="bg-orange-500 hover:bg-orange-600">
-            Đặt ngân sách cho {selectedCampaigns.length} chiến dịch
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SavedSchedules({
-  schedules,
-  onDelete,
-  onRunNow,
-}: {
-  schedules: ScheduledAdsBudget[];
-  onDelete: (id: string) => void;
-  onRunNow: (id: string) => void;
-}) {
-  if (schedules.length === 0) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <Clock className="h-12 w-12 mx-auto mb-3 opacity-50" />
-        <p className="font-medium">Chưa có lịch ngân sách</p>
-        <p className="text-sm mt-1">Tạo lịch ở tab "Lịch ngân sách"</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-white rounded-lg border overflow-hidden">
-      <div className="grid grid-cols-[1fr_80px_120px_100px_80px] gap-2 px-4 py-3 bg-gray-50 border-b text-xs font-medium text-gray-500">
-        <div>Chiến dịch</div>
-        <div className="text-center">Loại</div>
-        <div className="text-center">Khung giờ</div>
-        <div className="text-right">Ngân sách</div>
-        <div className="text-center">Thao tác</div>
-      </div>
-      <div className="divide-y max-h-[400px] overflow-auto">
-        {schedules.map(s => (
-          <div key={s.id} className="grid grid-cols-[1fr_80px_120px_100px_80px] gap-2 px-4 py-3 items-center hover:bg-gray-50">
-            <div className="min-w-0">
-              <p className="font-medium text-sm truncate">{s.campaign_name || 'Campaign ' + s.campaign_id}</p>
-              <p className="text-xs text-gray-400">
-                {s.days_of_week && s.days_of_week.length > 0 && s.days_of_week.length < 7
-                  ? formatDaysOfWeek(s.days_of_week)
-                  : s.specific_dates && s.specific_dates.length > 0
-                  ? s.specific_dates.slice(0, 3).join(', ') + (s.specific_dates.length > 3 ? '...' : '')
-                  : 'Hàng ngày'}
-              </p>
-            </div>
-            <div className="text-center">
-              <span className={cn("text-xs px-2 py-0.5 rounded", AD_TYPE_MAP[s.ad_type]?.color)}>
-                {AD_TYPE_MAP[s.ad_type]?.label}
-              </span>
-            </div>
-            <div className="text-sm text-center">
-              {formatHourRange(s.hour_start, s.hour_end)}
-            </div>
-            <div className="text-sm text-right font-medium text-orange-600">
-              {formatPrice(s.budget)}
-            </div>
-            <div className="flex justify-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
-                onClick={() => onRunNow(s.id)}
-                title="Chạy ngay"
-              >
-                <Play className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
-                onClick={() => onDelete(s.id)}
-                title="Xóa"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BudgetHistory({
   logs,
   onRefresh,
+  onDeleteSchedule,
 }: {
+  schedules: ScheduledAdsBudget[];
   logs: AdsBudgetLog[];
   onRefresh: () => void;
+  onDeleteSchedule: (id: string) => void;
 }) {
-  if (logs.length === 0) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <History className="h-12 w-12 mx-auto mb-3 opacity-50" />
-        <p className="font-medium">Chưa có lịch sử</p>
-        <p className="text-sm mt-1">Lịch sử thay đổi ngân sách sẽ hiển thị ở đây</p>
-      </div>
-    );
-  }
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const formatPrice = (p: number) => new Intl.NumberFormat('vi-VN').format(p) + 'đ';
+  const formatDateTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  // Format khung giờ từ hour và minute
+  const formatTimeSlot = (hourStart: number, minuteStart?: number) => {
+    const hour = hourStart.toString().padStart(2, '0');
+    const minute = (minuteStart || 0).toString().padStart(2, '0');
+    return `${hour}:${minute}`;
+  };
 
   return (
-    <div>
-      <div className="flex justify-end mb-3">
-        <Button variant="outline" size="sm" onClick={onRefresh}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Làm mới
-        </Button>
-      </div>
-      <div className="bg-white rounded-lg border overflow-hidden">
-        <div className="grid grid-cols-[1fr_100px_80px_150px] gap-2 px-4 py-3 bg-gray-50 border-b text-xs font-medium text-gray-500">
-          <div>Chiến dịch</div>
-          <div className="text-right">Ngân sách</div>
-          <div className="text-center">Trạng thái</div>
-          <div>Thời gian</div>
+    <div className="space-y-6">
+      {/* Schedules đã tạo */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <Clock className="h-4 w-4 text-blue-500" />
+            Lịch tự động đã cài đặt ({schedules.length})
+          </h3>
+          <Button variant="outline" size="sm" onClick={onRefresh}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Làm mới
+          </Button>
         </div>
-        <div className="divide-y max-h-[400px] overflow-auto">
-          {logs.map(l => (
-            <div key={l.id} className="grid grid-cols-[1fr_100px_80px_150px] gap-2 px-4 py-3 items-center hover:bg-gray-50">
-              <div className="min-w-0">
-                <p className="text-sm truncate">{l.campaign_name || 'Campaign ' + l.campaign_id}</p>
-                {l.error_message && (
-                  <p className="text-xs text-red-500 truncate" title={l.error_message}>
-                    {l.error_message}
-                  </p>
-                )}
-              </div>
-              <div className="text-sm text-right font-medium text-orange-600">
-                {formatPrice(l.new_budget)}
-              </div>
-              <div className="text-center">
-                <span className={cn(
-                  "text-xs px-2 py-0.5 rounded-full",
-                  l.status === 'success' ? 'bg-green-100 text-green-700' :
-                  l.status === 'failed' ? 'bg-red-100 text-red-700' :
-                  'bg-gray-100 text-gray-700'
-                )}>
-                  {l.status === 'success' ? 'OK' : l.status === 'failed' ? 'Lỗi' : 'Bỏ qua'}
-                </span>
-              </div>
-              <div className="text-xs text-gray-500">
-                {formatDateTime(l.executed_at)}
-              </div>
+
+        {schedules.length === 0 ? (
+          <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed">
+            <Clock className="h-10 w-10 mx-auto mb-2 text-gray-300" />
+            <p className="text-sm text-gray-500">Chưa có lịch tự động nào</p>
+            <p className="text-xs text-gray-400 mt-1">Bấm "Tự động ADS" để tạo lịch mới</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg border overflow-hidden">
+            <div className="grid grid-cols-[1fr_80px_100px_120px_100px_60px] gap-2 px-4 py-2.5 bg-gray-50 border-b text-xs font-medium text-gray-500 uppercase">
+              <div>Chiến dịch</div>
+              <div className="text-center">Loại</div>
+              <div className="text-center">Khung giờ</div>
+              <div className="text-center">Ngày áp dụng</div>
+              <div className="text-right">Ngân sách</div>
+              <div className="text-center">Xóa</div>
             </div>
-          ))}
-        </div>
+            <div className="divide-y max-h-[250px] overflow-auto">
+              {schedules.map(s => (
+                <div key={s.id} className="grid grid-cols-[1fr_80px_100px_120px_100px_60px] gap-2 px-4 py-2.5 items-center hover:bg-gray-50">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{s.campaign_name || 'Campaign ' + s.campaign_id}</p>
+                    <p className="text-xs text-gray-400">ID: {s.campaign_id}</p>
+                  </div>
+                  <div className="text-center">
+                    <span className={cn("text-xs px-2 py-0.5 rounded", AD_TYPE_MAP[s.ad_type]?.color)}>
+                      {AD_TYPE_MAP[s.ad_type]?.label}
+                    </span>
+                  </div>
+                  <div className="text-sm text-center font-medium text-blue-600">
+                    {formatTimeSlot(s.hour_start, s.minute_start)}
+                  </div>
+                  <div className="text-xs text-center text-gray-600">
+                    {s.days_of_week && s.days_of_week.length === 7
+                      ? <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded">Hàng ngày</span>
+                      : s.specific_dates && s.specific_dates.length > 0
+                      ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded" title={s.specific_dates.join(', ')}>
+                          {s.specific_dates.length} ngày
+                        </span>
+                      : '-'}
+                  </div>
+                  <div className="text-sm text-right font-medium text-orange-600">
+                    {formatPrice(s.budget)}
+                  </div>
+                  <div className="text-center">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
+                      onClick={() => onDeleteSchedule(s.id)}
+                      title="Xóa lịch"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Lịch sử thực thi */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+          <History className="h-4 w-4 text-orange-500" />
+          Lịch sử thực thi ({logs.length})
+        </h3>
+
+        {logs.length === 0 ? (
+          <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed">
+            <History className="h-10 w-10 mx-auto mb-2 text-gray-300" />
+            <p className="text-sm text-gray-500">Chưa có lịch sử thực thi</p>
+            <p className="text-xs text-gray-400 mt-1">Cron job chạy mỗi 30 phút (phút 0 và 30)</p>
+            <p className="text-xs text-gray-400">Kết quả sẽ hiển thị ở đây sau khi cron job thực thi</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg border overflow-hidden">
+            <div className="grid grid-cols-[1fr_100px_100px_150px] gap-2 px-4 py-2.5 bg-gray-50 border-b text-xs font-medium text-gray-500 uppercase">
+              <div>Chiến dịch</div>
+              <div className="text-right">Ngân sách mới</div>
+              <div className="text-center">Trạng thái</div>
+              <div>Thời gian thực thi</div>
+            </div>
+            <div className="divide-y max-h-[400px] overflow-auto">
+              {logs.map(l => {
+                const isExpanded = expandedLogId === l.id;
+                const hasFailed = l.status === 'failed';
+                
+                return (
+                  <div key={l.id}>
+                    <div 
+                      className={cn(
+                        "grid grid-cols-[1fr_100px_100px_150px] gap-2 px-4 py-2.5 items-center transition-colors",
+                        hasFailed ? "hover:bg-red-50 cursor-pointer" : "hover:bg-gray-50",
+                        isExpanded && hasFailed && "bg-red-50"
+                      )}
+                      onClick={() => hasFailed && setExpandedLogId(isExpanded ? null : l.id)}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm truncate font-medium">{l.campaign_name || 'Campaign ' + l.campaign_id}</p>
+                          {hasFailed && (
+                            <svg 
+                              className={cn("w-4 h-4 text-red-500 transition-transform flex-shrink-0", isExpanded && "rotate-180")} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400">ID: {l.campaign_id}</p>
+                      </div>
+                      <div className="text-sm text-right font-medium text-orange-600">
+                        {formatPrice(l.new_budget)}
+                      </div>
+                      <div className="text-center">
+                        <span className={cn(
+                          "text-xs px-2 py-1 rounded-full font-medium inline-flex items-center gap-1",
+                          l.status === 'success' ? 'bg-green-100 text-green-700' :
+                          l.status === 'failed' ? 'bg-red-100 text-red-700' :
+                          'bg-gray-100 text-gray-700'
+                        )}>
+                          {l.status === 'success' ? (
+                            <>
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                              Thành công
+                            </>
+                          ) : l.status === 'failed' ? (
+                            <>
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Thất bại
+                            </>
+                          ) : (
+                            'Bỏ qua'
+                          )}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {formatDateTime(l.executed_at)}
+                      </div>
+                    </div>
+                    
+                    {/* Chi tiết lỗi khi expand */}
+                    {isExpanded && hasFailed && l.error_message && (
+                      <div className="px-4 py-3 bg-red-50 border-t border-red-100">
+                        <div className="flex items-start gap-2">
+                          <svg className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-red-700 mb-1">Chi tiết lỗi:</p>
+                            <p className="text-xs text-red-600 bg-red-100 p-2 rounded font-mono break-all">
+                              {l.error_message}
+                            </p>
+                            <p className="text-xs text-red-500 mt-2">
+                              💡 Gợi ý: Kiểm tra lại thông tin shop, access token, hoặc campaign ID có hợp lệ không.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
