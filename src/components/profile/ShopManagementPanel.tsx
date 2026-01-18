@@ -964,19 +964,19 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
     return (
       <Card>
         <CardHeader className="pb-4">
-          <CardTitle className="flex items-center justify-between">
-            <span>Shop có quyền truy cập</span>
+          <CardTitle className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <span className="text-base md:text-lg">Shop có quyền truy cập</span>
             {!readOnly && isSystemAdmin && (
-              <div className="flex items-center gap-2">
-                <Button variant="outline" className="text-blue-600" disabled>
-                  <Users className="w-4 h-4 mr-2" />
-                  Phân quyền
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button variant="outline" size="sm" className="text-blue-600 h-8 md:h-9" disabled>
+                  <Users className="w-4 h-4 mr-1.5" />
+                  <span className="hidden sm:inline">Phân quyền</span>
                 </Button>
-                <Button className="bg-orange-500 hover:bg-orange-600" disabled>
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <Button size="sm" className="bg-orange-500 hover:bg-orange-600 h-8 md:h-9" disabled>
+                  <svg className="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  Kết nối Shop
+                  <span className="hidden sm:inline">Kết nối Shop</span>
                 </Button>
               </div>
             )}
@@ -1004,54 +1004,180 @@ export function ShopManagementPanel({ readOnly = false }: ShopManagementPanelPro
     <div className="space-y-6">
       <Card>
         <CardHeader className="pb-4">
-          <CardTitle className="flex items-center justify-between">
-            <span>Shop có quyền truy cập ({shops.length})</span>
+          <CardTitle className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <span className="text-base md:text-lg whitespace-nowrap">Shop có quyền truy cập ({shops.length})</span>
             {!readOnly && isSystemAdmin && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Button
                   variant="outline"
-                  className="text-green-600 hover:text-green-800 hover:bg-green-50"
+                  size="sm"
+                  className="text-green-600 hover:text-green-800 hover:bg-green-50 h-8 md:h-9"
                   onClick={handleRefreshAllTokens}
                   disabled={refreshingAllTokens || shops.length === 0}
                 >
                   {refreshingAllTokens ? (
-                    <Spinner size="sm" className="mr-2" />
+                    <Spinner size="sm" className="mr-1.5" />
                   ) : (
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                   )}
-                  Refresh All
+                  <span className="hidden sm:inline">Refresh All</span>
+                  <span className="sm:hidden">Refresh</span>
                 </Button>
                 <Button
                   variant="outline"
-                  className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                  size="sm"
+                  className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 h-8 md:h-9"
                   onClick={() => handleOpenMembersDialog()}
                 >
-                  <Users className="w-4 h-4 mr-2" />
-                  Phân quyền
+                  <Users className="w-4 h-4 mr-1.5" />
+                  <span className="hidden sm:inline">Phân quyền</span>
                 </Button>
                 <Button
-                  className="bg-orange-500 hover:bg-orange-600"
+                  size="sm"
+                  className="bg-orange-500 hover:bg-orange-600 h-8 md:h-9"
                   onClick={handleConnectNewShop}
                 >
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  Kết nối Shop
+                  <span className="hidden sm:inline">Kết nối Shop</span>
                 </Button>
               </div>
             )}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <SimpleDataTable
-            columns={columns}
-            data={shops}
-            keyExtractor={(shop) => shop.id}
-            emptyMessage="Chưa có shop nào được kết nối"
-            emptyDescription="Nhấn 'Kết nối Shop' để bắt đầu"
-          />
+        <CardContent className="p-0 md:p-6">
+          {/* Mobile View */}
+          <div className="md:hidden divide-y">
+            {shops.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-12">
+                <p className="text-slate-500">Chưa có shop nào được kết nối</p>
+                <p className="text-sm text-slate-400">Nhấn '+' để bắt đầu</p>
+              </div>
+            ) : (
+              shops.map((shop) => {
+                const tokenStatus = getTokenStatus(shop);
+                return (
+                  <div key={shop.id} className="p-4 hover:bg-slate-50">
+                    <div className="flex items-start gap-3">
+                      {/* Shop Logo */}
+                      <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {shop.shop_logo ? (
+                          <img src={shop.shop_logo} alt={shop.shop_name || ''} className="w-full h-full object-cover" />
+                        ) : (
+                          <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                          </svg>
+                        )}
+                      </div>
+                      
+                      {/* Shop Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="font-medium text-slate-800 truncate">
+                            {shop.shop_name || `Shop ${shop.shop_id}`}
+                          </p>
+                          {refreshingShop === shop.shop_id ? (
+                            <Spinner size="sm" />
+                          ) : !readOnly && (
+                            <button
+                              onClick={() => handleRefreshShopName(shop.shop_id)}
+                              className="text-slate-400 hover:text-slate-600"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 mb-2">
+                          {shop.region || 'VN'} - <span className="font-mono">{shop.shop_id}</span>
+                        </p>
+                        
+                        {/* Badges */}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            shop.role === 'admin' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {shop.role === 'admin' ? 'Quản trị viên' : 'Thành viên'}
+                          </span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            tokenStatus.variant === 'success' ? 'bg-green-100 text-green-700' :
+                            tokenStatus.variant === 'warning' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            Token: {tokenStatus.label}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      {!readOnly && isSystemAdmin && (
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-blue-600 h-7 w-7 p-0"
+                            onClick={() => handleRefreshToken(shop)}
+                            disabled={refreshingToken === shop.shop_id}
+                          >
+                            {refreshingToken === shop.shop_id ? (
+                              <Spinner size="sm" />
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-slate-600 h-7 w-7 p-0"
+                            onClick={() => handleReconnectShop(shop)}
+                            disabled={reconnectingShop === shop.shop_id}
+                          >
+                            {reconnectingShop === shop.shop_id ? (
+                              <Spinner size="sm" />
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                              </svg>
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500 h-7 w-7 p-0"
+                            onClick={() => {
+                              setShopToDelete(shop);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop View */}
+          <div className="hidden md:block">
+            <SimpleDataTable
+              columns={columns}
+              data={shops}
+              keyExtractor={(shop) => shop.id}
+              emptyMessage="Chưa có shop nào được kết nối"
+              emptyDescription="Nhấn 'Kết nối Shop' để bắt đầu"
+            />
+          </div>
         </CardContent>
       </Card>
 

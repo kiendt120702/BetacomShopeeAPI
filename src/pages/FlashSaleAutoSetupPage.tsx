@@ -4,11 +4,12 @@
  */
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { 
-  Clock, 
-  Calendar, 
-  Package, 
-  Zap, 
+import { useLocation } from 'react-router-dom';
+import {
+  Clock,
+  Calendar,
+  Package,
+  Zap,
   RefreshCw,
   CheckCircle,
   XCircle,
@@ -151,6 +152,23 @@ export default function FlashSaleAutoSetupPage() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
+  const location = useLocation();
+
+  // Get copyFromFlashSaleId directly from location state
+  const copyFromFlashSaleId = location.state?.copyFromFlashSaleId as number | null;
+
+  useEffect(() => {
+    if (location.state?.openSetupDialog) {
+      setShowSetupDialog(true);
+      // Clear openSetupDialog from state but keep copyFromFlashSaleId
+      // This prevents dialog from reopening on re-render while keeping the flash sale reference
+      window.history.replaceState(
+        { copyFromFlashSaleId: location.state?.copyFromFlashSaleId }, 
+        document.title
+      );
+    }
+  }, [location.state]);
+
   // Fetch time slots
   const fetchTimeSlots = async () => {
     if (!selectedShopId) return;
@@ -161,7 +179,7 @@ export default function FlashSaleAutoSetupPage() {
         body: { action: 'get-time-slots', shop_id: selectedShopId },
       });
       if (error) throw error;
-      
+
       if (data?.error === 'shop_flash_sale_param_error') {
         setTimeSlots([]);
         setUsedTimeslotIds(new Set());
@@ -173,32 +191,32 @@ export default function FlashSaleAutoSetupPage() {
       let slots: TimeSlot[] = [];
       if (data?.response?.time_slot_list) slots = data.response.time_slot_list;
       else if (Array.isArray(data?.response)) slots = data.response;
-      
+
       // Fetch danh sách Flash Sale đã tồn tại (type 1 = sắp tới, type 2 = đang chạy)
       const { data: existingFS } = await supabase
         .from('apishopee_flash_sale_data')
         .select('timeslot_id')
         .eq('shop_id', selectedShopId)
         .in('type', [1, 2]); // Chỉ lấy FS sắp tới và đang chạy
-      
+
       // Fetch danh sách slot đã được lên lịch tự động (pending/scheduled)
       const { data: scheduledSlots } = await supabase
         .from('apishopee_flash_sale_auto_history')
         .select('timeslot_id')
         .eq('shop_id', selectedShopId)
         .in('status', ['pending', 'scheduled']);
-      
+
       const usedIds = new Set<number>([
         ...(existingFS || []).map((fs: { timeslot_id: number }) => fs.timeslot_id).filter(Boolean),
         ...(scheduledSlots || []).map((s: { timeslot_id: number }) => s.timeslot_id).filter(Boolean),
       ]);
       setUsedTimeslotIds(usedIds);
-      
+
       // Lọc bỏ các slot đã có Flash Sale hoặc đã được lên lịch
       const availableSlots = (Array.isArray(slots) ? slots : []).filter(
         slot => !usedIds.has(slot.timeslot_id)
       );
-      
+
       setTimeSlots(availableSlots);
     } catch (err) {
       toast({ title: 'Lỗi', description: (err as Error).message, variant: 'destructive' });
@@ -208,49 +226,51 @@ export default function FlashSaleAutoSetupPage() {
     }
   };
 
-  // Fetch latest flash sale as template
-  const fetchLatestTemplate = async () => {
+  // Fetch latest flash sale as template (or specific flash sale if copyFromFlashSaleId is set)
+  const fetchLatestTemplate = async (specificFlashSaleId?: number) => {
     if (!selectedShopId) return;
     setLoadingTemplate(true);
     try {
-      const { data: fsData, error: fsError } = await supabase
-        .from('apishopee_flash_sale_data')
-        .select('*')
-        .eq('shop_id', selectedShopId)
-        .order('start_time', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (fsError && fsError.code !== 'PGRST116') throw fsError;
+      let flashSaleId = specificFlashSaleId || copyFromFlashSaleId;
       
-      if (!fsData || (fsData.type !== 1 && fsData.type !== 2)) {
-        setTemplateItems([]);
-        setLatestFlashSaleId(null);
-        setLoadingTemplate(false);
-        return;
+      // If no specific flash sale ID, get the latest one
+      if (!flashSaleId) {
+        const { data: fsData, error: fsError } = await supabase
+          .from('apishopee_flash_sale_data')
+          .select('*')
+          .eq('shop_id', selectedShopId)
+          .order('start_time', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (fsError && fsError.code !== 'PGRST116') throw fsError;
+
+        if (!fsData || (fsData.type !== 1 && fsData.type !== 2)) {
+          setTemplateItems([]);
+          setLatestFlashSaleId(null);
+          setLoadingTemplate(false);
+          return;
+        }
+
+        flashSaleId = fsData.flash_sale_id;
       }
 
-      setLatestFlashSaleId(fsData.flash_sale_id);
+      setLatestFlashSaleId(flashSaleId);
 
       const { data, error } = await supabase.functions.invoke('apishopee-flash-sale', {
-        body: { action: 'get-items', shop_id: selectedShopId, flash_sale_id: fsData.flash_sale_id },
+        body: { action: 'get-items', shop_id: selectedShopId, flash_sale_id: flashSaleId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
       const itemInfoList = data?.response?.item_info || [];
       const modelsList = data?.response?.models || [];
-      
-      // Debug log để xem cấu trúc dữ liệu
-      console.log('[TEMPLATE] itemInfoList:', JSON.stringify(itemInfoList, null, 2));
-      console.log('[TEMPLATE] modelsList:', JSON.stringify(modelsList, null, 2));
-      
+
       const itemsWithModels = itemInfoList.map((item: FlashSaleItem) => {
         const itemModels = modelsList.filter((m: FlashSaleModel) => m.item_id === item.item_id);
-        console.log(`[TEMPLATE] Item ${item.item_id} (${item.item_name}): found ${itemModels.length} models`);
         return { ...item, models: itemModels.length > 0 ? itemModels : undefined };
       });
-      
+
       const enabledItems = itemsWithModels.filter((item: FlashSaleItem) => item.status === 1);
       setTemplateItems(enabledItems);
     } catch (err) {
@@ -303,7 +323,7 @@ export default function FlashSaleAutoSetupPage() {
             flash_sale_id: record.flash_sale_id,
           },
         });
-        
+
         // Chỉ báo lỗi nếu không phải lỗi "không tìm thấy" (flash sale đã bị xóa trước đó)
         if (deleteError) {
           console.error('Delete flash sale error:', deleteError);
@@ -318,11 +338,11 @@ export default function FlashSaleAutoSetupPage() {
         .delete()
         .eq('id', id);
       if (error) throw error;
-      
+
       setHistory(prev => prev.filter(h => h.id !== id));
-      toast({ 
-        title: 'Đã xóa', 
-        description: record.flash_sale_id 
+      toast({
+        title: 'Đã xóa',
+        description: record.flash_sale_id
           ? `Đã xóa Flash Sale #${record.flash_sale_id} và bản ghi lịch sử`
           : 'Đã xóa bản ghi lịch sử'
       });
@@ -334,12 +354,12 @@ export default function FlashSaleAutoSetupPage() {
   // Clear all history (xóa cả flash sale trên Shopee)
   const clearAllHistory = async () => {
     if (!confirm('Bạn có chắc muốn xóa toàn bộ lịch sử? Các Flash Sale đã tạo trên Shopee cũng sẽ bị xóa.')) return;
-    
+
     try {
       // Xóa từng flash sale trên Shopee
       const recordsWithFlashSale = history.filter(h => h.flash_sale_id);
       let deletedCount = 0;
-      
+
       for (const record of recordsWithFlashSale) {
         try {
           await supabase.functions.invoke('apishopee-flash-sale', {
@@ -361,10 +381,10 @@ export default function FlashSaleAutoSetupPage() {
         .delete()
         .eq('shop_id', selectedShopId);
       if (error) throw error;
-      
+
       setHistory([]);
-      toast({ 
-        title: 'Đã xóa', 
+      toast({
+        title: 'Đã xóa',
         description: `Đã xóa ${deletedCount} Flash Sale trên Shopee và toàn bộ lịch sử`
       });
     } catch (err) {
@@ -375,9 +395,10 @@ export default function FlashSaleAutoSetupPage() {
   useEffect(() => {
     if (selectedShopId) {
       fetchTimeSlots();
-      fetchLatestTemplate();
+      // If copying from a specific flash sale, fetch that one; otherwise fetch latest
+      fetchLatestTemplate(copyFromFlashSaleId || undefined);
     }
-  }, [selectedShopId]);
+  }, [selectedShopId, copyFromFlashSaleId]);
 
   useEffect(() => {
     if (selectedShopId) {
@@ -413,6 +434,23 @@ export default function FlashSaleAutoSetupPage() {
     }
   };
 
+  // Toggle all slots in a specific date
+  const toggleDateSlots = (dateKey: string) => {
+    const slotsInDate = groupedSlots[dateKey] || [];
+    const slotIds = slotsInDate.map(s => s.timeslot_id);
+    const allSelected = slotIds.every(id => selectedSlots.has(id));
+    
+    const newSelected = new Set(selectedSlots);
+    if (allSelected) {
+      // Bỏ chọn tất cả slot trong ngày
+      slotIds.forEach(id => newSelected.delete(id));
+    } else {
+      // Chọn tất cả slot trong ngày
+      slotIds.forEach(id => newSelected.add(id));
+    }
+    setSelectedSlots(newSelected);
+  };
+
   // Open setup dialog - always available
   const handleStartClick = () => {
     setShowSetupDialog(true);
@@ -434,7 +472,7 @@ export default function FlashSaleAutoSetupPage() {
     isRunningRef.current = true;
     setProgress(0);
     setIsImmediateSetup(leadTimeMinutes === 0);
-    
+
     const slotsToProcess = timeSlots.filter(s => selectedSlots.has(s.timeslot_id));
     const logs: ProcessLog[] = slotsToProcess.map(s => ({
       timeslot_id: s.timeslot_id,
@@ -446,22 +484,13 @@ export default function FlashSaleAutoSetupPage() {
     // Prepare items to add
     const itemsToAdd = templateItems.map(item => {
       const enabledModels = item.models?.filter(m => m.status === 1) || [];
-      
-      // Debug log
-      console.log(`[PREPARE] Item ${item.item_id} (${item.item_name}):`, {
-        enabledModels: enabledModels.length,
-        hasItemPrice: !!item.input_promotion_price,
-        itemPrice: item.input_promotion_price,
-        itemStock: item.campaign_stock,
-      });
-      
+
       // Trường hợp 1: Sản phẩm không có biến thể với model_id = 0
       const isNonVariantWithModel = enabledModels.length === 1 && enabledModels[0].model_id === 0;
-      
+
       if (isNonVariantWithModel) {
         const model = enabledModels[0];
         if (!model.input_promotion_price || model.input_promotion_price <= 0) {
-          console.log(`[PREPARE] Skip item ${item.item_id}: invalid model price`);
           return null;
         }
         return {
@@ -471,10 +500,9 @@ export default function FlashSaleAutoSetupPage() {
           item_stock: model.campaign_stock || 0,
         };
       }
-      
+
       // Trường hợp 2: Sản phẩm không có biến thể - không có models, giá nằm trong item
       if (enabledModels.length === 0 && item.input_promotion_price && item.input_promotion_price > 0) {
-        console.log(`[PREPARE] Item ${item.item_id}: non-variant without models, using item price`);
         return {
           item_id: item.item_id,
           purchase_limit: item.purchase_limit || 0,
@@ -482,13 +510,12 @@ export default function FlashSaleAutoSetupPage() {
           item_stock: item.campaign_stock || 0,
         };
       }
-      
+
       // Trường hợp 3: Không có model nào enabled và không có giá item
       if (enabledModels.length === 0) {
-        console.log(`[PREPARE] Skip item ${item.item_id}: no enabled models and no item price`);
         return null;
       }
-      
+
       // Trường hợp 4: Sản phẩm có biến thể - gửi với models array
       return {
         item_id: item.item_id,
@@ -512,8 +539,6 @@ export default function FlashSaleAutoSetupPage() {
       }
       return false;
     });
-    
-    console.log('[PREPARE] Final itemsToAdd:', JSON.stringify(itemsToAdd, null, 2));
 
     // Nếu có lead time (scheduled), chỉ insert vào history và kết thúc
     if (leadTimeMinutes > 0) {
@@ -530,22 +555,22 @@ export default function FlashSaleAutoSetupPage() {
           slot_end_time: slot.end_time,
           items_count: itemsToAdd.length,
         };
-        
+
         const { error } = await supabase
           .from('apishopee_flash_sale_auto_history')
           .insert(historyRecord);
-        
+
         if (!error) insertedCount++;
       }
-      
+
       setIsRunning(false);
       isRunningRef.current = false;
       setProcessLogs([]);
       setSelectedSlots(new Set());
       fetchHistory();
       fetchTimeSlots();
-      toast({ 
-        title: 'Đã lên lịch', 
+      toast({
+        title: 'Đã lên lịch',
         description: `Đã lên lịch ${insertedCount} Flash Sale. Theo dõi trong bảng lịch sử bên dưới.`,
       });
       return;
@@ -557,9 +582,9 @@ export default function FlashSaleAutoSetupPage() {
 
     for (let i = 0; i < slotsToProcess.length; i++) {
       if (!isRunningRef.current) break;
-      
+
       const slot = slotsToProcess[i];
-      
+
       const historyRecord = {
         shop_id: selectedShopId,
         user_id: user?.id,
@@ -571,21 +596,21 @@ export default function FlashSaleAutoSetupPage() {
         slot_end_time: slot.end_time,
         items_count: itemsToAdd.length,
       };
-      
+
       const { data: historyData } = await supabase
         .from('apishopee_flash_sale_auto_history')
         .insert(historyRecord)
         .select()
         .single();
-      
+
       const historyId = historyData?.id;
-      
-      setProcessLogs(prev => prev.map(log => 
-        log.timeslot_id === slot.timeslot_id 
+
+      setProcessLogs(prev => prev.map(log =>
+        log.timeslot_id === slot.timeslot_id
           ? { ...log, status: 'processing', message: 'Đang tạo Flash Sale...' }
           : log
       ));
-      
+
       if (historyId) {
         await supabase
           .from('apishopee_flash_sale_auto_history')
@@ -618,7 +643,7 @@ export default function FlashSaleAutoSetupPage() {
         });
 
         if (addError) throw addError;
-        
+
         let message = `Đã tạo FS #${flashSaleId}`;
         if (addData?.error) {
           message += ` (Lỗi thêm SP: ${addData.message || addData.error})`;
@@ -626,51 +651,51 @@ export default function FlashSaleAutoSetupPage() {
           message += ` với ${itemsToAdd.length} SP`;
         }
 
-        setProcessLogs(prev => prev.map(log => 
-          log.timeslot_id === slot.timeslot_id 
+        setProcessLogs(prev => prev.map(log =>
+          log.timeslot_id === slot.timeslot_id
             ? { ...log, status: 'success', message, flash_sale_id: flashSaleId }
             : log
         ));
-        
+
         if (historyId) {
           await supabase
             .from('apishopee_flash_sale_auto_history')
-            .update({ 
-              status: 'success', 
+            .update({
+              status: 'success',
               flash_sale_id: flashSaleId,
               executed_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             })
             .eq('id', historyId);
         }
-        
+
         successCount++;
 
       } catch (err) {
         const errorMessage = (err as Error).message;
-        setProcessLogs(prev => prev.map(log => 
-          log.timeslot_id === slot.timeslot_id 
+        setProcessLogs(prev => prev.map(log =>
+          log.timeslot_id === slot.timeslot_id
             ? { ...log, status: 'error', message: errorMessage }
             : log
         ));
-        
+
         if (historyId) {
           await supabase
             .from('apishopee_flash_sale_auto_history')
-            .update({ 
-              status: 'error', 
+            .update({
+              status: 'error',
               error_message: errorMessage,
               executed_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             })
             .eq('id', historyId);
         }
-        
+
         errorCount++;
       }
 
       setProgress(Math.round(((i + 1) / slotsToProcess.length) * 100));
-      
+
       // Delay giữa các slots
       if (i < slotsToProcess.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -680,8 +705,8 @@ export default function FlashSaleAutoSetupPage() {
     setIsRunning(false);
     fetchHistory(); // Refresh history after completion
     fetchTimeSlots(); // Refresh time slots để loại bỏ các slot vừa tạo FS
-    toast({ 
-      title: 'Hoàn tất', 
+    toast({
+      title: 'Hoàn tất',
       description: `Thành công: ${successCount}, Lỗi: ${errorCount}`,
       variant: errorCount > 0 ? 'destructive' : 'default',
     });
@@ -727,29 +752,26 @@ export default function FlashSaleAutoSetupPage() {
   }
 
   return (
-    <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
-      <div className="px-6 py-6 space-y-6 flex flex-col flex-1 min-h-0">
+    <div className="h-full bg-slate-50 flex flex-col overflow-hidden">
+      <div className="px-6 py-6 space-y-6 flex flex-col flex-1 min-h-0 overflow-auto">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
               <Zap className="h-6 w-6 text-green-600" />
-              Tự động cài đặt Flash Sale
+              Lịch sử tự động cài Flash Sale
             </h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Tự động tạo Flash Sale cho nhiều khung giờ với cùng danh sách sản phẩm
-            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full md:w-auto">
             {isRunning ? (
-              <Button variant="destructive" onClick={stopAutoSetup}>
+              <Button variant="destructive" onClick={stopAutoSetup} className="w-full md:w-auto">
                 <Square className="h-4 w-4 mr-2" />
                 Dừng
               </Button>
             ) : (
-              <Button 
+              <Button
                 onClick={handleStartClick}
-                className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600"
+                className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 w-full md:w-auto"
               >
                 <Play className="h-4 w-4 mr-2" />
                 Bắt đầu
@@ -810,7 +832,7 @@ export default function FlashSaleAutoSetupPage() {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card className="border-0 shadow-sm">
             <CardContent className="py-4">
               <div className="flex items-center justify-between">
@@ -868,12 +890,12 @@ export default function FlashSaleAutoSetupPage() {
         {/* History Table */}
         <Card className="border-0 shadow-sm flex-1 flex flex-col min-h-0">
           <CardHeader className="border-b pb-4 flex-shrink-0">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
               <CardTitle className="text-base">Lịch sử tự động cài</CardTitle>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Filter className="h-4 w-4 text-slate-400" />
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger className="w-[120px] md:w-40 text-xs md:text-sm h-8 md:h-10">
                     <SelectValue placeholder="Lọc trạng thái" />
                   </SelectTrigger>
                   <SelectContent>
@@ -885,13 +907,13 @@ export default function FlashSaleAutoSetupPage() {
                     <SelectItem value="processing">Đang xử lý</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="outline" size="sm" onClick={fetchHistory} disabled={loadingHistory}>
-                  <RefreshCw className={cn("h-4 w-4 mr-2", loadingHistory && "animate-spin")} />
-                  Làm mới
+                <Button variant="outline" size="sm" onClick={fetchHistory} disabled={loadingHistory} className="h-8 md:h-10 text-xs md:text-sm">
+                  <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 md:mr-2", loadingHistory && "animate-spin")} />
+                  <span className="md:inline">Làm mới</span>
                 </Button>
-                <Button variant="outline" size="sm" onClick={clearAllHistory} disabled={history.length === 0}>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Xóa tất cả
+                <Button variant="outline" size="sm" onClick={clearAllHistory} disabled={history.length === 0} className="h-8 md:h-10 text-xs md:text-sm">
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5 md:mr-2" />
+                  <span className="md:inline">Xóa hết</span>
                 </Button>
               </div>
             </div>
@@ -908,7 +930,62 @@ export default function FlashSaleAutoSetupPage() {
               </div>
             ) : (
               <div className="h-full overflow-auto">
-                <table className="w-full text-sm">
+                {/* Mobile View */}
+                <div className="md:hidden divide-y">
+                  {history.map((record) => {
+                    const statusConfig = STATUS_CONFIG[record.status] || STATUS_CONFIG.pending;
+                    return (
+                      <div key={record.id} className="p-4 bg-white hover:bg-slate-50">
+                        <div className="flex items-start justify-between mb-2">
+                          <Badge className={cn("flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5", statusConfig.color)}>
+                            {statusConfig.icon}
+                            {statusConfig.label}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteRecord(record.id)}
+                            className="text-slate-400 hover:text-red-500 h-6 w-6 p-0"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+
+                        <div className="space-y-2 mb-3">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Khung giờ:</span>
+                            <span className="font-medium text-slate-800">
+                              {formatDate(record.slot_start_time)} <span className="mx-1 text-slate-300">|</span> {formatTime(record.slot_start_time)} - {formatTime(record.slot_end_time)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Số sản phẩm:</span>
+                            <span className="font-medium text-slate-800">{record.items_count}</span>
+                          </div>
+                          {record.status === 'success' && record.flash_sale_id && (
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-slate-500">Chi tiết:</span>
+                              <span className="text-green-600 font-mono">FS #{record.flash_sale_id}</span>
+                            </div>
+                          )}
+                          {record.status === 'error' && record.error_message && (
+                            <div className="text-xs text-red-500 bg-red-50 p-2 rounded mt-2">
+                              Lỗi: {record.error_message}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-2 border-t border-slate-50">
+                          <span>Tạo: {formatDateTime(record.created_at)}</span>
+                          {record.executed_at && <span>Thực hiện: {formatDateTime(record.executed_at)}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Desktop View */}
+                <table className="w-full text-sm hidden md:table">
                   <thead className="bg-slate-50 sticky top-0 z-10">
                     <tr className="border-b">
                       <th className="text-left px-4 py-3 font-medium text-slate-600">Trạng thái</th>
@@ -995,7 +1072,7 @@ export default function FlashSaleAutoSetupPage() {
               Cài đặt tự động tạo Flash Sale
             </DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-[1.2fr_1fr] gap-6 py-4">
+          <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr] gap-6 py-4 max-h-[70vh] overflow-y-auto px-4 md:px-1">
             {/* Left: Time Slots */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1024,28 +1101,47 @@ export default function FlashSaleAutoSetupPage() {
                   </div>
                 ) : (
                   <div className="divide-y">
-                    {(Object.entries(groupedSlots) as [string, TimeSlot[]][]).map(([date, slots]) => (
-                      <div key={date}>
-                        <div className="px-3 py-2 bg-slate-50 text-xs font-medium text-slate-600 sticky top-0">
-                          {date}
+                    {(Object.entries(groupedSlots) as [string, TimeSlot[]][]).map(([date, slots]) => {
+                      const slotIds = slots.map(s => s.timeslot_id);
+                      const allSelected = slotIds.length > 0 && slotIds.every(id => selectedSlots.has(id));
+                      const someSelected = slotIds.some(id => selectedSlots.has(id));
+                      
+                      return (
+                        <div key={date}>
+                          <div 
+                            className="px-3 py-2 bg-slate-50 text-xs font-medium text-slate-600 sticky top-0 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors"
+                            onClick={() => toggleDateSlots(date)}
+                          >
+                            <Checkbox
+                              checked={allSelected}
+                              className={cn(
+                                "border-slate-400",
+                                someSelected && !allSelected && "data-[state=unchecked]:bg-slate-200"
+                              )}
+                              onClick={(e) => e.stopPropagation()}
+                              onCheckedChange={() => toggleDateSlots(date)}
+                            />
+                            <span>{date}</span>
+                            <span className="text-slate-400 ml-auto">({slots.length} khung giờ)</span>
+                          </div>
+                          <div className="divide-y">
+                            {slots.map((slot: TimeSlot) => (
+                              <div key={slot.timeslot_id} className="px-3 py-2 flex items-center gap-2 hover:bg-slate-50">
+                                <Checkbox
+                                  checked={selectedSlots.has(slot.timeslot_id)}
+                                  onCheckedChange={() => toggleSlot(slot.timeslot_id)}
+                                  className="border-slate-400"
+                                />
+                                <Clock className="h-3 w-3 text-slate-400" />
+                                <span className="text-sm">
+                                  {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="divide-y">
-                          {slots.map((slot: TimeSlot) => (
-                            <div key={slot.timeslot_id} className="px-3 py-2 flex items-center gap-2 hover:bg-slate-50">
-                              <Checkbox
-                                checked={selectedSlots.has(slot.timeslot_id)}
-                                onCheckedChange={() => toggleSlot(slot.timeslot_id)}
-                                className="border-slate-400"
-                              />
-                              <Clock className="h-3 w-3 text-slate-400" />
-                              <span className="text-sm">
-                                {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1057,8 +1153,8 @@ export default function FlashSaleAutoSetupPage() {
                 <Clock className="h-4 w-4 text-green-600" />
                 Thời gian tự động cài
               </Label>
-              <Select 
-                value={isCustomLeadTime ? 'custom' : leadTimeMinutes.toString()} 
+              <Select
+                value={isCustomLeadTime ? 'custom' : leadTimeMinutes.toString()}
                 onValueChange={(v) => {
                   if (v === 'custom') {
                     setIsCustomLeadTime(true);
@@ -1083,7 +1179,7 @@ export default function FlashSaleAutoSetupPage() {
                   <SelectItem value="custom">Tùy chỉnh...</SelectItem>
                 </SelectContent>
               </Select>
-              
+
               {/* Custom input */}
               {isCustomLeadTime && (
                 <div className="flex items-center gap-2">
@@ -1106,7 +1202,7 @@ export default function FlashSaleAutoSetupPage() {
                 </div>
               )}
               <p className="text-xs text-slate-500">
-                {leadTimeMinutes === 0 
+                {leadTimeMinutes === 0
                   ? 'Tất cả Flash Sale sẽ được tạo ngay lập tức'
                   : `Mỗi Flash Sale sẽ được tạo ${leadTimeMinutes} phút trước giờ bắt đầu của khung đó`
                 }
@@ -1117,7 +1213,7 @@ export default function FlashSaleAutoSetupPage() {
                 <Label className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-orange-600" />
                   Sản phẩm mẫu
-                  <Button variant="ghost" size="sm" onClick={fetchLatestTemplate} disabled={loadingTemplate} className="ml-auto h-6 px-2">
+                  <Button variant="ghost" size="sm" onClick={() => fetchLatestTemplate()} disabled={loadingTemplate} className="ml-auto h-6 px-2">
                     <RefreshCw className={cn("h-3 w-3", loadingTemplate && "animate-spin")} />
                   </Button>
                 </Label>
@@ -1140,24 +1236,16 @@ export default function FlashSaleAutoSetupPage() {
                 )}
               </div>
 
-              {/* Summary */}
-              <div className="mt-4 bg-slate-50 rounded-lg p-3">
-                <p className="text-sm font-medium text-slate-700">Tóm tắt:</p>
-                <ul className="text-sm text-slate-600 mt-2 space-y-1">
-                  <li>• {selectedSlots.size} khung giờ đã chọn</li>
-                  <li>• {templateItems.length} sản phẩm mẫu</li>
-                </ul>
-              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSetupDialog(false)}>
+            <Button variant="outline" onClick={() => setShowSetupDialog(false)} className="w-full md:w-auto mt-2 md:mt-0">
               Hủy
             </Button>
-            <Button 
+            <Button
               onClick={runAutoSetup}
               disabled={selectedSlots.size === 0 || templateItems.length === 0}
-              className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600"
+              className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 w-full md:w-auto"
             >
               <Play className="h-4 w-4 mr-2" />
               Bắt đầu ({selectedSlots.size} khung giờ)

@@ -317,7 +317,7 @@ export function DataTable<TData, TValue>({
       )}
 
       {/* Table */}
-      <div className="relative">
+      <div className="relative w-full overflow-x-auto">
         <table className="w-full">
           {/* Fixed Header */}
           <thead className="bg-slate-50 border-b sticky top-0 z-10">
@@ -348,8 +348,8 @@ export function DataTable<TData, TValue>({
                                 asc: <ChevronUp className="h-4 w-4" />,
                                 desc: <ChevronDown className="h-4 w-4" />,
                               }[header.column.getIsSorted() as string] ?? (
-                                <ChevronsUpDown className="h-4 w-4 text-slate-400" />
-                              )}
+                                  <ChevronsUpDown className="h-4 w-4 text-slate-400" />
+                                )}
                             </span>
                           )}
                         </div>
@@ -428,7 +428,7 @@ export function DataTable<TData, TValue>({
                 const pageIndex = table.getState().pagination.pageIndex;
                 const pageCount = table.getPageCount();
                 let pageNum: number;
-                
+
                 if (pageCount <= 5) {
                   pageNum = i;
                 } else if (pageIndex < 3) {
@@ -438,7 +438,7 @@ export function DataTable<TData, TValue>({
                 } else {
                   pageNum = pageIndex - 2 + i;
                 }
-                
+
                 return (
                   <Button
                     key={pageNum}

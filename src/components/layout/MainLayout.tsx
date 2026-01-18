@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 export default function MainLayout() {
   const { isAuthenticated, isLoading, session } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Show loading while checking auth (but only briefly during initial load)
   // If we have a session, don't show loading - let the page render
@@ -37,18 +38,29 @@ export default function MainLayout() {
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        mobileOpen={mobileMenuOpen}
+        onMobileClose={() => setMobileMenuOpen(false)}
       />
+
+      {/* Mobile Overlay */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden transition-opacity"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
 
       {/* Main Content */}
       <main
         className={cn(
           'min-h-screen transition-all duration-300',
-          sidebarCollapsed ? 'pl-16' : 'pl-64'
+          sidebarCollapsed ? 'md:pl-16' : 'md:pl-64',
+          'pl-0' // No padding on mobile
         )}
       >
         {/* Breadcrumb Header */}
-        <Breadcrumb />
-        
+        <Breadcrumb onMobileMenuClick={() => setMobileMenuOpen(true)} />
+
         <Outlet />
       </main>
     </div>
